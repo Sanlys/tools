@@ -4,13 +4,20 @@
 //!
 //! - [`backend`] (behind the `backend` feature): an axum extractor that
 //!   verifies a Bearer JWT against the IDP's JWKS and exposes the caller's
-//!   granted roles for *this* app.
-//! - `frontend_web` (wasm target only): drives the browser-redirect + PKCE
-//!   login flow and draws the `LoginWidget` (sign-in button / user-icon
-//!   menu) for an egui/wasm tool frontend.
-//! - `frontend_native` (native target only): the RFC 8252 loopback-redirect
-//!   flow for a tool's standalone `eframe` binary, with the refresh token
-//!   persisted in the OS keyring.
+//!   granted roles for *this* app. Backend crates should enable *only*
+//!   this feature -- it pulls in axum/jsonwebtoken/reqwest/tokio, nothing
+//!   frontend-shaped (egui, ureq, the OS keyring, ...).
+//! - `frontend_web` (wasm target + `frontend-web` feature): drives the
+//!   browser-redirect + PKCE login flow and draws the `LoginWidget`
+//!   (sign-in button / user-icon menu) for an egui/wasm tool frontend.
+//! - `frontend_native` (native target + `frontend-native` feature): the
+//!   RFC 8252 loopback-redirect flow for a tool's standalone `eframe`
+//!   binary, with the refresh token persisted in the OS keyring.
+//!
+//! A tool's frontend crate (compiled both to wasm and natively from the
+//! same `Cargo.toml`) enables both `frontend-web` and `frontend-native`
+//! unconditionally -- whichever one's target-gated dependencies don't
+//! match the platform actually being built for simply aren't compiled in.
 //!
 //! The actual passkey/WebAuthn ceremony never happens in this crate -- it
 //! always happens on the IDP's own origin (a plain HTML/JS page, see
@@ -22,10 +29,10 @@ pub mod pkce;
 #[cfg(feature = "backend")]
 pub mod backend;
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "frontend-web"))]
 pub mod frontend_web;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "frontend-native"))]
 pub mod frontend_native;
 
 use serde::{Deserialize, Serialize};

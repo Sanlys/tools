@@ -28,7 +28,7 @@ standalone = []
 [dependencies]
 platform-core.workspace = true
 platform-config.workspace = true
-auth-adapter.workspace = true
+auth-adapter = { workspace = true, features = ["frontend-web", "frontend-native"] }
 serde.workspace = true
 serde_json.workspace = true
 egui.workspace = true

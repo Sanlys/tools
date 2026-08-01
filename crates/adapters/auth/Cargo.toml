@@ -24,27 +24,32 @@ thiserror = { workspace = true, optional = true }
 
 [features]
 backend = ["dep:axum", "dep:jsonwebtoken", "dep:reqwest", "dep:tokio", "dep:tracing", "dep:thiserror"]
-
 # A tool's *frontend* crate (e.g. hello-frontend) compiles to both wasm
 # (embedded in the portal) and native (its own standalone binary) from the
-# same Cargo.toml -- so, same rule as platform-core/portal-frontend, the
-# wasm-vs-native split for the LoginWidget lives in *target* tables here
-# (unconditional per matching target), not in a Cargo feature a consumer
-# would have to remember to pick.
+# same Cargo.toml, so it enables both features unconditionally -- whichever
+# one's target-gated deps don't match the platform being built for simply
+# aren't compiled in, at no cost. Backends only ever enable `backend`
+# (never these): axum/hello/idp/portal-backend have no business pulling in
+# egui, ureq, or the OS keyring just because they link this crate, which is
+# exactly the bug this split fixes (see git history for the CI failure it
+# caused when these were plain, non-optional target-gated deps).
+frontend-web = ["dep:egui", "dep:ehttp", "dep:web-sys", "dep:js-sys", "dep:wasm-bindgen", "dep:getrandom"]
+frontend-native = ["dep:egui", "dep:ehttp", "dep:webbrowser", "dep:keyring", "dep:ureq", "dep:rand"]
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-egui.workspace = true
-ehttp.workspace = true
-web-sys = { version = "0.3", features = ["Window", "Storage", "Location", "History", "UrlSearchParams"] }
-js-sys = "0.3"
-wasm-bindgen = "0.2"
-getrandom = { version = "0.2", features = ["js"] }
+egui = { workspace = true, optional = true }
+ehttp = { workspace = true, optional = true }
+web-sys = { version = "0.3", optional = true, features = ["Window", "Storage", "Location", "History", "UrlSearchParams"] }
+js-sys = { version = "0.3", optional = true }
+wasm-bindgen = { version = "0.2", optional = true }
+getrandom = { version = "0.2", optional = true, features = ["js"] }
 
 # native-only: the RFC 8252 loopback-redirect flow for `eframe` standalone
 # binaries, plus OS-keyring-backed refresh-token storage.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-egui.workspace = true
-ehttp.workspace = true
-webbrowser.workspace = true
-keyring.workspace = true
-ureq = { workspace = true, features = ["json"] }
-rand.workspace = true
+egui = { workspace = true, optional = true }
+ehttp = { workspace = true, optional = true }
+webbrowser = { workspace = true, optional = true }
+keyring = { workspace = true, optional = true }
+ureq = { workspace = true, features = ["json"], optional = true }
+rand = { workspace = true, optional = true }
