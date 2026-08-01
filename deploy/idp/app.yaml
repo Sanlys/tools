@@ -1,0 +1,29 @@
+# ArgoCD Application for deploy/idp. Not part of the Helm chart it points
+# to (an Application can't sensibly live inside the release it manages).
+# Auto-discovered, not applied by hand: the kubernetes repo's
+# cluster/prod/apps/tools/app.yaml is a "tools root" Application (app-of-apps)
+# whose source is this repo's deploy/ directory, recursively matching
+# **/app.yaml -- the same discovery pattern the kubernetes repo's own root
+# Application uses for every other app. See docs/ci-cd.md.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: tools-idp
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: "https://github.com/Sanlys/tools.git"
+    targetRevision: main
+    path: deploy/idp
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: tools-idp
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

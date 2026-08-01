@@ -18,6 +18,22 @@ services:
       timeout: 5s
       retries: 10
 
+  idp-postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: idp
+      POSTGRES_PASSWORD: idp
+      POSTGRES_DB: idp
+    ports:
+      - "5433:5432"
+    volumes:
+      - idp-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U idp"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   minio:
     image: minio/minio:latest
     command: server /data --console-address ":9001"
@@ -48,4 +64,5 @@ services:
 
 volumes:
   postgres-data:
+  idp-postgres-data:
   minio-data:

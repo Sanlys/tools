@@ -24,6 +24,14 @@ resources:
   limits:
     memory: 128Mi
 env:
+  # This app's own sign-in state (client_id "portal", see
+  # deploy/idp/values.yaml's IDP_CLIENTS_JSON) -- gates portal-native
+  # features only, not other tools' panels. See
+  # crates/adapters/auth's docs and apps/portal/frontend/src/lib.rs.
+  - name: IDP_ISSUER_URL
+    value: "https://idp.k8s.lysakermoen.com"
+  - name: AUTH_CLIENT_ID
+    value: "portal"
   - name: TOOLS_REGISTRY_JSON
     value: |
       [
@@ -35,7 +43,8 @@ env:
           "api_base_url": "https://hello.k8s.lysakermoen.com",
           "health_path": "/health",
           "k8s_namespace": "tools-hello",
-          "k8s_deployment": "tools-hello"
+          "k8s_deployment": "tools-hello",
+          "requires_role": null
         }
       ]
 # Grants other tools' `dashboardGrant` something to bind to -- this

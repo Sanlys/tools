@@ -1,0 +1,46 @@
+[package]
+name = "idp-backend"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "idp_backend"
+path = "src/lib.rs"
+
+[[bin]]
+name = "idp-backend"
+path = "src/main.rs"
+
+[dependencies]
+postgres-adapter.workspace = true
+metrics-adapter.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+thiserror.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+rand.workspace = true
+base64.workspace = true
+sha2.workspace = true
+hex.workspace = true
+url.workspace = true
+jsonwebtoken.workspace = true
+rsa.workspace = true
+webauthn-rs.workspace = true
+dashmap.workspace = true
+metrics.workspace = true
+
+axum = { workspace = true, features = ["macros"] }
+axum-extra.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time", "signal"] }
+tower-http = { workspace = true, features = ["fs", "cors", "trace"] }
+sqlx = { workspace = true, features = ["chrono", "uuid", "migrate", "macros"] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"

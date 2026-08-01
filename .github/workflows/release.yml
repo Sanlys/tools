@@ -34,6 +34,9 @@ jobs:
           - name: portal
             dockerfile: apps/portal/backend/Dockerfile
             image: portal-backend
+          - name: idp
+            dockerfile: apps/idp/backend/Dockerfile
+            image: idp-backend
     steps:
       - uses: actions/checkout@v4
         with:

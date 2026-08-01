@@ -70,6 +70,18 @@ struct OpenPanel {
 pub struct PortalApp {
     registry: JsonResource<ToolRegistry>,
     open: BTreeMap<String, OpenPanel>,
+    /// The portal's *own* sign-in state (client_id "portal") -- this only
+    /// gates portal-native features, if any exist later. It can't gate
+    /// other tools' panels: a token minted for "portal" carries no roles
+    /// for "hello" or any other app's own client_id (standard OIDC
+    /// audience scoping). Each tool's own panel manages its own login
+    /// independently -- see `hello_frontend::HelloPanel` for that pattern.
+    /// wasm-only for now: a native portal binary is a minor/dev-only path,
+    /// so it simply runs without a sign-in UI.
+    #[cfg(target_arch = "wasm32")]
+    auth_config: JsonResource<auth_adapter::AuthConfig>,
+    #[cfg(target_arch = "wasm32")]
+    login: auth_adapter::frontend_web::LoginWidget,
 }
 
 impl Default for PortalApp {
@@ -77,6 +89,10 @@ impl Default for PortalApp {
         let mut app = Self {
             registry: JsonResource::new(),
             open: BTreeMap::new(),
+            #[cfg(target_arch = "wasm32")]
+            auth_config: JsonResource::new(),
+            #[cfg(target_arch = "wasm32")]
+            login: auth_adapter::frontend_web::LoginWidget::new(),
         };
         app.open_builtin("home");
         app
@@ -139,6 +155,24 @@ impl eframe::App for PortalApp {
             self.registry.fetch("/config/tools.json");
         }
 
+        #[cfg(target_arch = "wasm32")]
+        {
+            if !self.auth_config.has_requested() {
+                self.auth_config.fetch("/config/auth.json");
+            }
+            if let Some(Ok(cfg)) = self.auth_config.ready() {
+                self.login.set_config(cfg.clone());
+            }
+            self.login.tick(ctx);
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        egui::TopBottomPanel::top("auth_bar").show(ctx, |ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                self.login.ui(ui);
+            });
+        });
+
         egui::SidePanel::left("nav")
             .min_width(180.0)
             .show(ctx, |ui| {
@@ -159,7 +193,18 @@ impl eframe::App for PortalApp {
                     Some(Ok(links)) => {
                         let links = links.clone();
                         for link in &links {
-                            if ui.button(&link.name).clicked() {
+                            // `requires_role` is purely a cosmetic hint here
+                            // (a lock icon) -- the portal can't itself know
+                            // whether the signed-in user holds a role
+                            // scoped to *this tool's* client_id (see the
+                            // note on `PortalApp::login`); the opened panel
+                            // resolves that for real, using its own login
+                            // widget.
+                            let label = match &link.requires_role {
+                                Some(_) => format!("🔒 {}", link.name),
+                                None => link.name.clone(),
+                            };
+                            if ui.button(label).clicked() {
                                 self.open_tool(link);
                             }
                         }

@@ -1,0 +1,50 @@
+[package]
+name = "auth-adapter"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+base64.workspace = true
+
+# Backend (verifies a Bearer JWT against the IDP's JWKS) -- only ever
+# enabled by axum *-backend crates, which are never built for wasm32, so
+# these stay behind a plain (non-target-gated) opt-in feature rather than
+# needing their own target split.
+axum = { workspace = true, optional = true }
+jsonwebtoken = { workspace = true, optional = true }
+reqwest = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true, features = ["sync", "rt", "time"] }
+tracing = { workspace = true, optional = true }
+thiserror = { workspace = true, optional = true }
+
+[features]
+backend = ["dep:axum", "dep:jsonwebtoken", "dep:reqwest", "dep:tokio", "dep:tracing", "dep:thiserror"]
+
+# A tool's *frontend* crate (e.g. hello-frontend) compiles to both wasm
+# (embedded in the portal) and native (its own standalone binary) from the
+# same Cargo.toml -- so, same rule as platform-core/portal-frontend, the
+# wasm-vs-native split for the LoginWidget lives in *target* tables here
+# (unconditional per matching target), not in a Cargo feature a consumer
+# would have to remember to pick.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+egui.workspace = true
+ehttp.workspace = true
+web-sys = { version = "0.3", features = ["Window", "Storage", "Location", "History", "UrlSearchParams"] }
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+getrandom = { version = "0.2", features = ["js"] }
+
+# native-only: the RFC 8252 loopback-redirect flow for `eframe` standalone
+# binaries, plus OS-keyring-backed refresh-token storage.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+egui.workspace = true
+ehttp.workspace = true
+webbrowser.workspace = true
+keyring.workspace = true
+ureq = { workspace = true, features = ["json"] }
+rand.workspace = true

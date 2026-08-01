@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Admin - Tools IDP</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<main class="wide">
+  <nav class="top">
+    <a href="/">Home</a>
+    <a href="/profile">Profile</a>
+    <a href="/admin">Admin</a>
+  </nav>
+  <h1>Admin</h1>
+  <div id="error" class="error" hidden></div>
+
+  <div class="card">
+    <h3>Users</h3>
+    <table id="users-table"><thead><tr><th>Username</th><th>Display name</th><th>Admin</th><th></th></tr></thead><tbody></tbody></table>
+  </div>
+
+  <div class="card">
+    <h3>Invites</h3>
+    <div class="row">
+      <input id="invite-note" type="text" placeholder="note (optional)" style="flex:1" />
+      <button id="create-invite">Create invite</button>
+    </div>
+    <table id="invites-table"><thead><tr><th>Link</th><th>Note</th><th>Expires</th><th></th></tr></thead><tbody></tbody></table>
+  </div>
+
+  <div class="card">
+    <h3>Apps &amp; declared roles</h3>
+    <p class="muted">Each app declares its own role vocabulary in <code>IDP_CLIENTS_JSON</code>.</p>
+    <table id="clients-table"><thead><tr><th>client_id</th><th>Name</th><th>Roles</th></tr></thead><tbody></tbody></table>
+  </div>
+
+  <div class="card">
+    <h3>Grant a role</h3>
+    <label for="grant-user">User</label>
+    <select id="grant-user"></select>
+    <label for="grant-client">App</label>
+    <select id="grant-client"></select>
+    <label for="grant-role">Role</label>
+    <select id="grant-role"></select>
+    <button id="grant-role-btn">Grant</button>
+
+    <h4 style="margin-top:1.5rem">Current grants for selected user</h4>
+    <table id="grants-table"><thead><tr><th>App</th><th>Role</th><th></th></tr></thead><tbody></tbody></table>
+  </div>
+</main>
+<script src="/api.js"></script>
+<script>
+  let users = [];
+  let clients = [];
+
+  function showError(err) {
+    const el = document.getElementById('error');
+    el.textContent = err.message || String(err);
+    el.hidden = false;
+  }
+
+  async function requireAdmin() {
+    try {
+      const me = await api('/api/me');
+      if (!me.is_admin) {
+        window.location.href = '/profile';
+        return false;
+      }
+      return true;
+    } catch (err) {
+      window.location.href = '/login?next=' + encodeURIComponent('/admin');
+      return false;
+    }
+  }
+
+  async function loadUsers() {
+    users = await api('/api/admin/users');
+    document.querySelector('#users-table tbody').innerHTML = users
+      .map((u) => `<tr><td>${u.username}</td><td>${u.display_name}</td><td>${u.is_admin ? 'yes' : ''}</td><td><button class="secondary" onclick="deleteUser('${u.id}')">Delete</button></td></tr>`)
+      .join('');
+    const select = document.getElementById('grant-user');
+    select.innerHTML = users.map((u) => `<option value="${u.id}">${u.username}</option>`).join('');
+  }
+
+  async function deleteUser(id) {
+    if (!confirm('Delete this user?')) return;
+    try {
+      await api('/api/admin/users/' + id, { method: 'DELETE' });
+      await loadUsers();
+    } catch (err) {
+      showError(err);
+    }
+  }
+
+  async function loadInvites() {
+    const invites = await api('/api/admin/invites');
+    document.querySelector('#invites-table tbody').innerHTML = invites
+      .map((i) => `<tr><td><a href="${i.url}">${i.used ? '(used)' : 'link'}</a></td><td>${i.note || ''}</td><td class="muted">${new Date(i.expires_at).toLocaleString()}</td><td><button class="secondary" onclick="deleteInvite('${i.id}')">Delete</button></td></tr>`)
+      .join('');
+  }
+
+  async function deleteInvite(id) {
+    try {
+      await api('/api/admin/invites/' + id, { method: 'DELETE' });
+      await loadInvites();
+    } catch (err) {
+      showError(err);
+    }
+  }
+
+  async function loadClients() {
+    clients = await api('/api/admin/clients');
+    document.querySelector('#clients-table tbody').innerHTML = clients
+      .map((c) => `<tr><td>${c.client_id}</td><td>${c.name}</td><td>${(c.roles || []).join(', ') || '-'}</td></tr>`)
+      .join('');
+    const select = document.getElementById('grant-client');
+    select.innerHTML = clients.map((c) => `<option value="${c.client_id}">${c.name}</option>`).join('');
+    updateRoleOptions();
+  }
+
+  function updateRoleOptions() {
+    const clientId = document.getElementById('grant-client').value;
+    const client = clients.find((c) => c.client_id === clientId);
+    document.getElementById('grant-role').innerHTML = (client?.roles || []).map((r) => `<option value="${r}">${r}</option>`).join('');
+  }
+
+  async function loadGrants() {
+    const userId = document.getElementById('grant-user').value;
+    if (!userId) return;
+    const grants = await api('/api/admin/users/' + userId + '/roles');
+    document.querySelector('#grants-table tbody').innerHTML = grants
+      .map((g) => `<tr><td>${g.client_id}</td><td>${g.role}</td><td><button class="secondary" onclick="revokeGrant('${g.user_id}','${g.client_id}','${g.role}')">Revoke</button></td></tr>`)
+      .join('') || '<tr><td class="muted" colspan="3">No grants yet.</td></tr>';
+  }
+
+  async function revokeGrant(userId, clientId, role) {
+    try {
+      await api(`/api/admin/roles?user_id=${encodeURIComponent(userId)}&client_id=${encodeURIComponent(clientId)}&role=${encodeURIComponent(role)}`, { method: 'DELETE' });
+      await loadGrants();
+    } catch (err) {
+      showError(err);
+    }
+  }
+
+  (async () => {
+    if (!(await requireAdmin())) return;
+    await Promise.all([loadUsers(), loadInvites(), loadClients()]);
+    await loadGrants();
+  })();
+
+  document.getElementById('create-invite').addEventListener('click', async () => {
+    try {
+      await api('/api/admin/invites', { method: 'POST', body: { note: document.getElementById('invite-note').value.trim() || undefined } });
+      document.getElementById('invite-note').value = '';
+      await loadInvites();
+    } catch (err) {
+      showError(err);
+    }
+  });
+
+  document.getElementById('grant-client').addEventListener('change', updateRoleOptions);
+  document.getElementById('grant-user').addEventListener('change', loadGrants);
+
+  document.getElementById('grant-role-btn').addEventListener('click', async () => {
+    const user_id = document.getElementById('grant-user').value;
+    const client_id = document.getElementById('grant-client').value;
+    const role = document.getElementById('grant-role').value;
+    if (!user_id || !client_id || !role) return;
+    try {
+      await api('/api/admin/roles', { method: 'POST', body: { user_id, client_id, role } });
+      await loadGrants();
+    } catch (err) {
+      showError(err);
+    }
+  });
+</script>
+</body>
+</html>

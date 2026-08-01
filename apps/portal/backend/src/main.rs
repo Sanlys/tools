@@ -9,7 +9,8 @@
 //! ConfigMap.
 
 use api_types::{CheckResult, DashboardStatus, Health, ToolRegistry, ToolStatus};
-use axum::extract::State;
+use auth_adapter::backend::AuthState;
+use axum::extract::{FromRef, State};
 use axum::routing::get;
 use axum::{Json, Router};
 use std::sync::Arc;
@@ -22,6 +23,13 @@ struct AppState {
     registry: Arc<ToolRegistry>,
     http_client: reqwest::Client,
     k8s_client: Option<kube::Client>,
+    auth: AuthState,
+}
+
+impl FromRef<AppState> for AuthState {
+    fn from_ref(state: &AppState) -> Self {
+        state.auth.clone()
+    }
 }
 
 #[tokio::main]
@@ -47,10 +55,13 @@ async fn main() -> anyhow::Result<()> {
         .timeout(Duration::from_secs(3))
         .build()?;
 
+    let auth = AuthState::from_env("portal");
+
     let state = AppState {
         registry,
         http_client,
         k8s_client,
+        auth: auth.clone(),
     };
 
     let (metrics_layer, metrics_router) = metrics_adapter::metrics_layer()?;
@@ -68,6 +79,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/config/tools.json", get(get_tools))
         .route("/api/status", get(get_status))
         .merge(metrics_router)
+        .merge(auth_adapter::backend::config_route(auth.public_config()))
         .layer(metrics_layer)
         .layer(cors)
         .with_state(state)

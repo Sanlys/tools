@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Register - Tools IDP</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<main>
+  <h1 id="heading">Register</h1>
+  <p class="subtitle" id="subtitle">Checking whether this instance needs setup...</p>
+
+  <div id="form" hidden>
+    <label for="username">Username</label>
+    <input id="username" type="text" autocomplete="username webauthn" />
+
+    <label for="display-name">Display name (optional)</label>
+    <input id="display-name" type="text" />
+
+    <button id="register">Create account with a passkey</button>
+  </div>
+
+  <div id="no-invite" hidden>
+    <p>This instance requires an invite link to register. Ask an admin for one.</p>
+  </div>
+
+  <div id="error" class="error" hidden></div>
+
+  <p class="muted" style="margin-top:1.5rem">
+    Already have an account? <a id="login-link" href="/login">Sign in</a>
+  </p>
+</main>
+<script src="/api.js"></script>
+<script>
+  const nextUrl = qs('next') || '/profile';
+  const inviteToken = qs('invite');
+  document.getElementById('login-link').href = '/login?next=' + encodeURIComponent(nextUrl);
+
+  function showError(err) {
+    const el = document.getElementById('error');
+    el.textContent = err.message || String(err);
+    el.hidden = false;
+  }
+
+  (async () => {
+    let needsSetup = false;
+    try {
+      ({ needs_setup: needsSetup } = await api('/api/setup/status'));
+    } catch (err) {
+      showError(err);
+      return;
+    }
+
+    if (needsSetup) {
+      document.getElementById('subtitle').textContent = 'No account exists yet -- this creates the first (admin) account.';
+      document.getElementById('form').hidden = false;
+    } else if (inviteToken) {
+      document.getElementById('subtitle').textContent = 'Create your account using the invite link you were given.';
+      document.getElementById('form').hidden = false;
+    } else {
+      document.getElementById('subtitle').textContent = '';
+      document.getElementById('no-invite').hidden = false;
+    }
+  })();
+
+  document.getElementById('register').addEventListener('click', async () => {
+    document.getElementById('error').hidden = true;
+    const username = document.getElementById('username').value.trim();
+    const displayName = document.getElementById('display-name').value.trim();
+    if (!username) {
+      showError(new Error('username is required'));
+      return;
+    }
+    try {
+      await startRegistration(username, displayName, inviteToken || undefined);
+      window.location.href = nextUrl;
+    } catch (err) {
+      showError(err);
+    }
+  });
+</script>
+</body>
+</html>

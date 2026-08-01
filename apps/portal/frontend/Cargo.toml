@@ -18,6 +18,7 @@ path = "src/bin/native.rs"
 platform-core.workspace = true
 platform-config.workspace = true
 api-types.workspace = true
+auth-adapter.workspace = true
 hello-frontend.workspace = true
 tracing.workspace = true
 
