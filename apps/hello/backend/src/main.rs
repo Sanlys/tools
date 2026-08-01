@@ -21,11 +21,12 @@
 //! an explicit allow-list of your real domains before this leaves the
 //! reference-example stage.
 
+use auth_adapter::backend::{AuthState, AuthUser};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::State;
+use axum::extract::{FromRef, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use tower_http::cors::{Any, CorsLayer};
@@ -36,6 +37,13 @@ struct AppState {
     s3_client: aws_sdk_s3::Client,
     bucket: String,
     pg_pool: sqlx::PgPool,
+    auth: AuthState,
+}
+
+impl FromRef<AppState> for AuthState {
+    fn from_ref(state: &AppState) -> Self {
+        state.auth.clone()
+    }
 }
 
 #[tokio::main]
@@ -60,10 +68,13 @@ async fn main() -> anyhow::Result<()> {
     .execute(&pg_pool)
     .await?;
 
+    let auth = AuthState::from_env("hello");
+
     let state = AppState {
         s3_client,
         bucket: s3_cfg.bucket_name,
         pg_pool,
+        auth: auth.clone(),
     };
 
     let (metrics_layer, metrics_router) = metrics_adapter::metrics_layer()?;
@@ -81,8 +92,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/health", get(health))
         .route("/api/status", get(get_status))
         .route("/api/greetings", post(post_greeting))
+        .route("/api/greetings/reset", delete(reset_greetings))
         .route("/ws", get(ws_handler))
         .merge(metrics_router)
+        .merge(auth_adapter::backend::config_route(auth.public_config()))
         .layer(metrics_layer)
         .layer(cors)
         .with_state(state)
@@ -145,6 +158,28 @@ async fn post_greeting(
         .execute(&state.pg_pool)
         .await?;
     Ok(StatusCode::CREATED)
+}
+
+/// Reference example of an auth-gated route: requires a valid Bearer token
+/// *and* the `operator` role for this app's own client_id (declared in
+/// `deploy/idp/values.yaml`'s `IDP_CLIENTS_JSON` entry for `hello`). Copy
+/// this shape -- `AuthUser` as a handler parameter, `require_role` checked
+/// first so a missing role responds 403 rather than the generic 500 an
+/// `ApiError` would give -- for any route a new tool wants to gate.
+async fn reset_greetings(
+    State(state): State<AppState>,
+    user: AuthUser,
+) -> axum::response::Response {
+    if let Err(err) = user.require_role("operator") {
+        return err.into_response();
+    }
+    match sqlx::query("DELETE FROM greetings")
+        .execute(&state.pg_pool)
+        .await
+    {
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(err) => ApiError::from(err).into_response(),
+    }
 }
 
 async fn ws_handler(ws: WebSocketUpgrade) -> impl IntoResponse {

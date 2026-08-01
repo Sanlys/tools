@@ -1,0 +1,94 @@
+# Values for the tools platform's own IDP. See docs/architecture.md's
+# "Porting the IDP" note and docs/adding-a-tool.md's auth section.
+#
+# IDP_CLIENTS_JSON is the static, GitOps-declared OAuth client + role
+# registry (mirrors deploy/portal/values.yaml's TOOLS_REGISTRY_JSON
+# pattern) -- adding auth to a new tool means adding an entry here, not
+# calling an admin API. Every client is a *public* client (PKCE only, no
+# client_secret) -- see docs/architecture.md for why that's safe here.
+
+nameOverride: "idp"
+fullnameOverride: ""
+image:
+  repository: harbor.k8s.lysakermoen.com/tools/idp-backend
+  tag: "latest"
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+replicaCount: 1
+containerPort: 4000
+envFrom: []
+resources:
+  requests:
+    cpu: 100m
+    memory: 192Mi
+  limits:
+    memory: 192Mi
+env:
+  - name: BASE_URL
+    value: "https://idp.k8s.lysakermoen.com"
+  # The registrable domain suffix, not this deployment's exact hostname --
+  # so existing passkeys keep working unchanged if this ever moves from
+  # the `internal` ingress class to `public` on the bare domain (see
+  # docs/architecture.md). Must have no trailing slash on BASE_URL either
+  # (a WebAuthn origin-matching gotcha carried over from the original
+  # design in sanlys/manager).
+  - name: RP_ID
+    value: "lysakermoen.com"
+  - name: IDP_CLIENTS_JSON
+    value: |
+      [
+        {
+          "client_id": "portal",
+          "name": "Tools Portal",
+          "redirect_uris": ["https://portal.k8s.lysakermoen.com/"],
+          "roles": [],
+          "native": false
+        },
+        {
+          "client_id": "hello",
+          "name": "Hello",
+          "redirect_uris": [
+            "https://hello.k8s.lysakermoen.com/",
+            "http://127.0.0.1:0/callback"
+          ],
+          "roles": ["operator"],
+          "native": true
+        }
+      ]
+serviceAccount:
+  create: false
+dashboardGrant:
+  enabled: true
+  subjectName: tools-portal
+  subjectNamespace: tools-portal
+ingress:
+  enabled: true
+  className: internal
+  host: idp.k8s.lysakermoen.com
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-internal
+  tls:
+    enabled: true
+    secretName: idp-internal-tls
+bucket:
+  enabled: false
+postgres:
+  enabled: true
+  image: postgres:16-alpine
+  storage: 1Gi
+  storageClassName: rook-ceph-block-ssd
+  database: idp
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 256Mi
+monitoring:
+  enabled: true
+  interval: 30s
+  serviceMonitorLabels: {}
+  prometheusRuleLabels: {}
+  dashboardNamespace: "monitoring"
+  alerts:
+    enabled: true

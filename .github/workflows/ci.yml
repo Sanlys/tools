@@ -21,6 +21,12 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # keyring's Linux backend (used by auth-adapter's native loopback
+      # login flow, see crates/adapters/auth) needs dbus headers to build,
+      # only for native targets -- the wasm build below never touches it.
+      - name: install native build deps (libdbus, for keyring)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+
       - name: fmt
         run: cargo fmt --all -- --check
 
@@ -66,6 +72,8 @@ jobs:
             dockerfile: apps/webhello/backend/Dockerfile
           - name: portal-backend
             dockerfile: apps/portal/backend/Dockerfile
+          - name: idp-backend
+            dockerfile: apps/idp/backend/Dockerfile
     steps:
       - uses: actions/checkout@v4
 

@@ -17,6 +17,8 @@ crates/
     postgres          -- Postgres pool wired from a single-pod Postgres's env vars
     k8s               -- read-only Deployment-readiness client (dashboard only)
     metrics           -- axum-prometheus /metrics wiring
+    auth              -- AuthUser extractor (backend) + LoginWidget (frontend),
+                          talking to apps/idp -- see "Auth" below
 
 apps/
   portal/             -- the unified web app (see below)
@@ -29,12 +31,15 @@ apps/
   webhello/           -- reference tool with a plain static HTML/JS frontend
                           instead of egui -- see "Standalone tools" below
     backend
+  idp/                -- the platform's own OIDC provider + WebAuthn passkey login
+    backend           -- axum: OIDC endpoints, WebAuthn ceremonies, Postgres
+    frontend          -- plain static HTML/CSS/JS (not egui -- see "Auth" below)
 
 deploy/
   charts/tool-library -- shared Helm library chart (Deployment, Service, Ingress,
                           bucket claim, Postgres, ServiceMonitor, PrometheusRule,
                           dashboard ConfigMap, per-namespace dashboard RBAC grant)
-  hello/, webhello/, portal/ -- per-app charts + values.yaml + an ArgoCD Application
+  hello/, webhello/, portal/, idp/ -- per-app charts + values.yaml + an ArgoCD Application
 
 templates/new-tool/   -- cargo-generate template scaffolding a new tool's app + chart
 
@@ -143,12 +148,50 @@ This now targets the real homelab cluster (Talos + Argo CD, see the
   its *own* namespace only (`dashboardGrant` in that tool's `values.yaml`),
   rather than the portal holding a `ClusterRole`.
 
-## Porting the IDP
+## Auth: `apps/idp` + `crates/adapters/auth`
 
-Not done here, deliberately -- but nothing in this scaffolding should
-conflict with it. When it happens, per the plan: the IDP moves into this
-monorepo as `apps/idp`, using `crates/adapters/*` directly like any other
-tool, and becomes both a panel in the portal and the auth layer other
-tools integrate against (likely a future `crates/adapters/auth` built once
-the IDP's OIDC token-exchange interface is stable, per the "adapters:
-build as needed, not upfront" principle already in the Homelab notes).
+Ported from the design proven out in `sanlys/manager`'s `idp/` (a
+from-scratch OIDC provider + WebAuthn passkey login), as its own app here:
+
+- **`apps/idp`** is a standalone tool like any other (own Postgres, own
+  Helm chart), *not* a portal panel -- WebAuthn ceremonies have to run on
+  the IDP's own origin anyway (RP ID/origin matching), so signing in,
+  managing passkeys/sessions, and admin (invites, per-app role grants) all
+  happen by visiting the IDP directly. Its frontend is plain static
+  HTML/CSS/vanilla JS (`apps/idp/frontend/static`), deliberately *not*
+  egui/wasm: any OAuth client redirecting a browser here -- including a
+  hypothetical one outside this whole Rust workspace -- gets a small, fast
+  login page regardless of what stack that client is built with.
+- No consent screen and no dynamic OAuth client registration: every client
+  (and the role vocabulary it declares) is listed once in the IDP's own
+  `IDP_CLIENTS_JSON` (`deploy/idp/values.yaml`), the same "static,
+  GitOps-declared registry" pattern the portal already uses for
+  `TOOLS_REGISTRY_JSON`. Every client is a *public* client (PKCE only, no
+  `client_secret`) -- safe because every client here is first-party and
+  known in advance, and it means the IDP needs zero sops-managed secrets
+  of its own (its RS256 signing key and cookie-encryption key are
+  generated on first boot and persisted in its own Postgres, same idea as
+  the original design).
+- Per-app, per-user role grants (`user_app_roles`) sit on top of "is
+  logged in": each client declares its own flat list of role-name strings,
+  an admin grants specific users specific roles for a specific app from
+  the IDP's `/admin` page, and that app's issued token carries only the
+  roles granted for *that app's own* `client_id` (never another app's).
+- **`crates/adapters/auth`** is the shared library every other tool
+  depends on: a `backend` feature (`AuthUser` axum extractor + `AuthState`,
+  verifying a Bearer JWT against the IDP's JWKS) for backends, and a
+  `LoginWidget` egui component (redirect + PKCE on wasm via
+  `frontend_web`, an RFC 8252 loopback-redirect flow + OS-keyring token
+  storage on native via `frontend_native`) for frontends. See
+  `apps/hello`'s wiring for the copy-paste pattern, and
+  `docs/adding-a-tool.md`'s auth section.
+- One important consequence of standard OIDC audience scoping: a token
+  minted for one client_id can't carry roles for a different client_id.
+  So a tool's own panel -- even when it's opened *inside* the portal --
+  manages its own login independently, scoped to its own `client_id`, not
+  the portal's. The portal's own top-bar sign-in only gates portal-native
+  features (there are none yet); it can't gate other tools' panels, and
+  doesn't try to. Silent SSO (`prompt=none`) is what keeps this from
+  meaning repeated passkey prompts: once the IDP has a session cookie
+  (from any prior login), each tool's own silent attempt picks it up with
+  at most a brief invisible redirect, not a new ceremony.

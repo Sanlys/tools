@@ -14,9 +14,21 @@ crate-type = ["cdylib", "rlib"]
 name = "hello-standalone"
 path = "src/bin/standalone.rs"
 
+# On by default so this crate's own standalone wasm build (`trunk build`,
+# either run directly here or from apps/hello/backend's Dockerfile) gets
+# its `#[wasm_bindgen(start)]` entry point for free. `apps/portal/frontend`
+# depends on this crate too (to embed `HelloPanel` in the unified bundle)
+# and explicitly turns this off there -- two crates in the same wasm
+# module each exporting their own wasm-bindgen `start` symbol is a linker
+# error, and the portal already has its own `start()`.
+[features]
+default = ["standalone"]
+standalone = []
+
 [dependencies]
 platform-core.workspace = true
 platform-config.workspace = true
+auth-adapter = { workspace = true, features = ["frontend-web", "frontend-native"] }
 serde.workspace = true
 serde_json.workspace = true
 egui.workspace = true

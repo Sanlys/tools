@@ -74,6 +74,45 @@ pull (see `docs/ci-cd.md`).
 Steps 1-4 are exactly what `templates/new-tool/generate.sh` prints at the
 end, so you don't have to remember this list.
 
+## Adding auth to a tool
+
+Optional -- a tool with no gated actions doesn't need any of this. If it
+does:
+
+1. **Declare the client.** Add an entry to `deploy/idp/values.yaml`'s
+   `IDP_CLIENTS_JSON`: `client_id` (usually the tool's own id), its
+   `redirect_uris`, and the flat list of role names it wants to be able to
+   grant (e.g. `["operator"]`). Set `"native": true` too if the tool's
+   standalone binary should support the loopback login flow.
+2. **Backend.** Add `auth-adapter = { workspace = true, features =
+   ["backend"] }`. Add an `AuthState` field to your `AppState` +
+   `impl FromRef<AppState> for AuthState`) (same pattern as
+   `axum_extra::extract::cookie::Key` elsewhere), construct it with
+   `AuthState::from_env("your-client-id")`, merge
+   `auth_adapter::backend::config_route(auth.public_config())` into your
+   router, and take `user: AuthUser` as a handler parameter + call
+   `user.require_role("...")?` in any route you want gated. See
+   `apps/hello/backend`'s `reset_greetings` handler.
+3. **Frontend.** Add `auth-adapter.workspace = true`. Add a
+   `#[cfg(target_arch = "wasm32")] use auth_adapter::frontend_web::LoginWidget;`
+   / `#[cfg(not(target_arch = "wasm32"))] use
+   auth_adapter::frontend_native::LoginWidget;` pair, a `login: LoginWidget`
+   field, call `login.tick(ctx)` every frame and `login.ui(ui)` wherever you
+   want the sign-in button/avatar drawn, and gate whatever needs it behind
+   `login.has_role("...")`. See `apps/hello/frontend`'s `HelloPanel` for the
+   full pattern, including the wasm-vs-native config wiring (`JsonResource`
+   fetch vs. a synchronous `fetch_auth_config` call).
+4. **Env vars.** Add `IDP_ISSUER_URL`/`AUTH_CLIENT_ID` to the tool's
+   `deploy/<tool>/values.yaml` (both default sensibly for local dev if
+   unset -- see `docs/local-development.md`).
+
+One thing *not* to do: don't expect the portal's own sign-in to gate your
+tool's panel. A token minted for the portal's `client_id` can't carry
+roles for your tool's `client_id` (standard OIDC audience scoping) -- your
+panel needs its own `LoginWidget`, even when hosted inside the portal. See
+`docs/architecture.md`'s "Auth" section for why, and how silent SSO
+(`prompt=none`) keeps that from meaning a second passkey prompt.
+
 ## Design constraints to keep in mind
 
 - No runtime plugin loading -- the portal's `ToolPanel` enum is a closed,

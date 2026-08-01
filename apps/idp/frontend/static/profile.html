@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Profile - Tools IDP</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<main class="wide">
+  <nav class="top">
+    <a href="/">Home</a>
+    <a href="/profile">Profile</a>
+    <a id="admin-link" href="/admin" hidden>Admin</a>
+  </nav>
+  <h1>Profile</h1>
+
+  <div class="card">
+    <label for="display-name">Display name</label>
+    <input id="display-name" type="text" />
+    <button id="save-profile">Save</button>
+    <div class="row" style="margin-top:0.75rem">
+      <span class="muted" id="username-line"></span>
+      <button class="secondary" id="signout">Sign out</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>App access</h3>
+    <p class="muted">Roles you've been granted, per app. Ask an admin for more.</p>
+    <table id="apps-table"><tbody></tbody></table>
+  </div>
+
+  <div class="card">
+    <h3>Passkeys</h3>
+    <table id="passkeys-table"><tbody></tbody></table>
+    <button id="add-passkey" class="secondary">Add a passkey</button>
+  </div>
+
+  <div class="card">
+    <h3>Active sessions</h3>
+    <table id="sessions-table"><tbody></tbody></table>
+    <button id="revoke-all" class="danger">Sign out everywhere</button>
+  </div>
+
+  <div id="error" class="error" hidden></div>
+</main>
+<script src="/api.js"></script>
+<script>
+  function showError(err) {
+    const el = document.getElementById('error');
+    el.textContent = err.message || String(err);
+    el.hidden = false;
+  }
+
+  async function loadPasskeys() {
+    const passkeys = await api('/api/passkeys');
+    const tbody = document.querySelector('#passkeys-table tbody');
+    tbody.innerHTML = passkeys
+      .map((p) => `<tr><td>${p.label || '(unlabeled)'}</td><td class="muted">${new Date(p.created_at).toLocaleDateString()}</td><td><button class="secondary" data-id="${p.id}" onclick="deletePasskey('${p.id}')">Remove</button></td></tr>`)
+      .join('') || '<tr><td class="muted">No passkeys yet.</td></tr>';
+  }
+
+  async function deletePasskey(id) {
+    try {
+      await api('/api/passkeys/' + id, { method: 'DELETE' });
+      await loadPasskeys();
+    } catch (err) {
+      showError(err);
+    }
+  }
+
+  async function loadSessions() {
+    const sessions = await api('/api/sessions');
+    const tbody = document.querySelector('#sessions-table tbody');
+    tbody.innerHTML = sessions
+      .map((s) => `<tr><td>${s.ip_address || '?'}</td><td class="muted">${(s.user_agent || '').slice(0, 40)}</td><td class="muted">${new Date(s.last_seen_at).toLocaleString()}</td><td><button class="secondary" onclick="revokeSession('${s.id}')">Revoke</button></td></tr>`)
+      .join('');
+  }
+
+  async function revokeSession(id) {
+    try {
+      await api('/api/sessions/' + id, { method: 'DELETE' });
+      await loadSessions();
+    } catch (err) {
+      showError(err);
+    }
+  }
+
+  (async () => {
+    let me;
+    try {
+      me = await api('/api/me');
+    } catch (err) {
+      window.location.href = '/login?next=' + encodeURIComponent('/profile');
+      return;
+    }
+    document.getElementById('display-name').value = me.display_name;
+    document.getElementById('username-line').textContent = '@' + me.username + (me.is_admin ? ' - admin' : '');
+    if (me.is_admin) document.getElementById('admin-link').hidden = false;
+
+    document.querySelector('#apps-table tbody').innerHTML =
+      (me.apps || []).map((a) => `<tr><td>${a.client_id}</td><td>${a.role}</td></tr>`).join('') ||
+      '<tr><td class="muted">No app-specific roles granted yet.</td></tr>';
+
+    await loadPasskeys();
+    await loadSessions();
+  })();
+
+  document.getElementById('save-profile').addEventListener('click', async () => {
+    try {
+      await api('/api/profile', { method: 'POST', body: { display_name: document.getElementById('display-name').value.trim() } });
+    } catch (err) {
+      showError(err);
+    }
+  });
+
+  document.getElementById('add-passkey').addEventListener('click', async () => {
+    const label = prompt('Label for this passkey (optional):') || undefined;
+    try {
+      await addPasskey(label);
+      await loadPasskeys();
+    } catch (err) {
+      showError(err);
+    }
+  });
+
+  document.getElementById('revoke-all').addEventListener('click', async () => {
+    try {
+      await api('/api/sessions', { method: 'DELETE' });
+      window.location.href = '/login';
+    } catch (err) {
+      showError(err);
+    }
+  });
+
+  document.getElementById('signout').addEventListener('click', async () => {
+    await api('/api/auth/logout', { method: 'POST' });
+    window.location.href = '/login';
+  });
+</script>
+</body>
+</html>

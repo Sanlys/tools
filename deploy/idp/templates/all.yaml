@@ -1,0 +1,19 @@
+{{- include "tool-library.deployment" . }}
+---
+{{ include "tool-library.service" . }}
+---
+{{ include "tool-library.ingress" . }}
+---
+{{ include "tool-library.objectbucketclaim" . }}
+---
+{{ include "tool-library.postgres" . }}
+---
+{{ include "tool-library.servicemonitor" . }}
+---
+{{ include "tool-library.prometheusrule" . }}
+---
+{{ include "tool-library.grafanadashboard" . }}
+---
+{{ include "tool-library.serviceAccount" . }}
+---
+{{ include "tool-library.dashboardGrant" . }}

@@ -36,6 +36,12 @@ pub struct ToolLink {
     pub k8s_namespace: Option<String>,
     #[serde(default)]
     pub k8s_deployment: Option<String>,
+    /// If set, this tool's panel stays hidden in the portal until the
+    /// signed-in user holds this role for the tool's own `client_id` (see
+    /// `auth-adapter`'s `LoginWidget::has_role`). `None` means the tool is
+    /// open to anyone, signed in or not.
+    #[serde(default)]
+    pub requires_role: Option<String>,
 }
 
 pub type ToolRegistry = Vec<ToolLink>;

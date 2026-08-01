@@ -15,7 +15,14 @@ image:
 imagePullSecrets: []
 replicaCount: 1
 containerPort: 8081
-env: []
+env:
+  # This app's own sign-in state -- see deploy/idp/values.yaml's
+  # IDP_CLIENTS_JSON "hello" entry (declares the "operator" role gating
+  # the reset-greetings example action) and crates/adapters/auth's docs.
+  - name: IDP_ISSUER_URL
+    value: "https://idp.k8s.lysakermoen.com"
+  - name: AUTH_CLIENT_ID
+    value: "hello"
 envFrom: []
 resources:
   requests:

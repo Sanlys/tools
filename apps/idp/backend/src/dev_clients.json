@@ -1,0 +1,16 @@
+[
+  {
+    "client_id": "portal",
+    "name": "Tools Portal",
+    "redirect_uris": ["http://localhost:8080/"],
+    "roles": [],
+    "native": false
+  },
+  {
+    "client_id": "hello",
+    "name": "Hello",
+    "redirect_uris": ["http://localhost:8081/", "http://127.0.0.1:0/callback"],
+    "roles": ["operator"],
+    "native": true
+  }
+]

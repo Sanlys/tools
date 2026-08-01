@@ -10,6 +10,11 @@ cargo install cargo-generate  # only needed for scaffolding a new tool
 
 Docker (or Podman) for the local Postgres/MinIO stand-ins below.
 
+On Linux, building anything that depends on `auth-adapter`'s native login
+flow (any tool's standalone binary, or `idp-backend` itself) needs dbus
+headers for the `keyring` crate: `sudo apt install libdbus-1-dev
+pkg-config` (Debian/Ubuntu) or the equivalent for your distro.
+
 ## The honest version
 
 This is fresh scaffolding, not a battle-tested dev setup: there's no
@@ -110,6 +115,29 @@ backend (`cargo run -p webhello-backend`, defaulting to `0.0.0.0:8082`) and
 open `http://localhost:8082` directly; `STATIC_DIR` defaults to `./static`
 relative to the process's cwd, so run it from `apps/webhello/backend/` (or
 set `STATIC_DIR` explicitly) rather than the repo root.
+
+## 6. Run the IDP locally (to test auth end to end)
+
+```sh
+cp .env.example .env   # DATABASE_URL below is for idp-backend, not hello
+DATABASE_URL=postgres://idp:idp@localhost:5433/idp cargo run -p idp-backend   # 0.0.0.0:4000
+```
+
+With no `IDP_CLIENTS_JSON`/`IDP_CLIENTS_FILE` set, it falls back to the
+bundled `apps/idp/backend/src/dev_clients.json`, which already declares
+`portal` and `hello` exactly as `deploy/idp/values.yaml` does in
+production, just pointed at `localhost`. Visit `http://localhost:4000` and
+register the first account (becomes admin automatically, no invite
+needed) -- needs a real WebAuthn-capable browser and a platform
+authenticator or security key; there's no password fallback.
+
+With `idp-backend` running, start `hello-backend`/`portal-backend` and
+`trunk serve` as above; both default to `IDP_ISSUER_URL=http://localhost:4000`
+if unset, so the "Sign in" button in the portal's top bar and in the Hello
+panel should both work without any extra env vars. Grant yourself the
+`operator` role for `hello` from the IDP's `/admin` page to see the
+"Reset all greetings" button in the Hello panel go from disabled to
+enabled.
 
 ## The usual checks
 

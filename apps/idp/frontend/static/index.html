@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Tools IDP</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<main>
+  <h1>Tools IDP</h1>
+  <p class="subtitle">Passkey-based sign-in for the tools platform.</p>
+  <div id="content">Loading...</div>
+</main>
+<script src="/api.js"></script>
+<script>
+  (async () => {
+    const content = document.getElementById('content');
+    try {
+      const me = await api('/api/me');
+      content.innerHTML = `
+        <p>Signed in as <strong>${me.display_name}</strong> (@${me.username})${me.is_admin ? ' - admin' : ''}</p>
+        <button onclick="window.location.href='/profile'">Profile</button>
+        ${me.is_admin ? '<button class="secondary" onclick="window.location.href=\'/admin\'">Admin</button>' : ''}
+        <button class="secondary" id="signout">Sign out</button>
+      `;
+      document.getElementById('signout').addEventListener('click', async () => {
+        await api('/api/auth/logout', { method: 'POST' });
+        window.location.reload();
+      });
+    } catch (err) {
+      content.innerHTML = `<p>Not signed in.</p><button onclick="window.location.href='/login'">Sign in</button>`;
+    }
+  })();
+</script>
+</body>
+</html>

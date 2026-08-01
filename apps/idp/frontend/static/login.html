@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sign in - Tools IDP</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<main>
+  <h1>Sign in</h1>
+  <p class="subtitle">Use a passkey registered on this device or a nearby one.</p>
+
+  <label for="username">Username (optional)</label>
+  <input id="username" type="text" autocomplete="username webauthn" placeholder="leave blank to pick a passkey instead" />
+
+  <button id="signin">Sign in with passkey</button>
+  <button id="signin-any" class="secondary">Sign in without a username</button>
+
+  <div id="error" class="error" hidden></div>
+
+  <p class="muted" style="margin-top:1.5rem">
+    No account yet? <a id="register-link" href="/register">Register</a>
+  </p>
+</main>
+<script src="/api.js"></script>
+<script>
+  const nextUrl = qs('next') || '/profile';
+  document.getElementById('register-link').href = '/register?next=' + encodeURIComponent(nextUrl);
+
+  function showError(err) {
+    const el = document.getElementById('error');
+    el.textContent = err.message || String(err);
+    el.hidden = false;
+  }
+
+  async function doSignIn(username) {
+    document.getElementById('error').hidden = true;
+    try {
+      await startAuthentication(username);
+      window.location.href = nextUrl;
+    } catch (err) {
+      showError(err);
+    }
+  }
+
+  document.getElementById('signin').addEventListener('click', () => {
+    const username = document.getElementById('username').value.trim();
+    doSignIn(username || undefined);
+  });
+  document.getElementById('signin-any').addEventListener('click', () => doSignIn(undefined));
+</script>
+</body>
+</html>

@@ -8,11 +8,13 @@ members = [
     "crates/adapters/postgres",
     "crates/adapters/k8s",
     "crates/adapters/metrics",
+    "crates/adapters/auth",
     "apps/hello/backend",
     "apps/hello/frontend",
     "apps/webhello/backend",
     "apps/portal/backend",
     "apps/portal/frontend",
+    "apps/idp/backend",
 ]
 
 [workspace.package]
@@ -30,7 +32,16 @@ s3-adapter = { path = "crates/adapters/s3" }
 postgres-adapter = { path = "crates/adapters/postgres" }
 k8s-adapter = { path = "crates/adapters/k8s" }
 metrics-adapter = { path = "crates/adapters/metrics" }
-hello-frontend = { path = "apps/hello/frontend" }
+auth-adapter = { path = "crates/adapters/auth" }
+# default-features = false since apps/portal/frontend is the only
+# consumer of this as a *library* dependency, and needs the "standalone"
+# feature (hello-frontend's own #[wasm_bindgen(start)] entry point) off to
+# avoid a wasm linker collision with the portal's own start() -- see
+# apps/hello/frontend/Cargo.toml. Building hello-frontend itself directly
+# (its own trunk build, or `cargo build -p hello-frontend`) is unaffected:
+# a package's own [features].default always applies to itself regardless
+# of what other members request of it via workspace-dependency inheritance.
+hello-frontend = { path = "apps/hello/frontend", default-features = false }
 
 # shared external deps (kept in one place so every crate/app stays in
 # lockstep; a member adds its own extra features via
@@ -41,15 +52,39 @@ thiserror = "1"
 anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+rand = "0.8"
+base64 = "0.22"
+sha2 = "0.10"
+hex = "0.4"
+url = "2"
 
 egui = "0.29"
 eframe = { version = "0.29", default-features = false, features = ["glow", "persistence", "default_fonts", "wayland", "x11"] }
 ehttp = "0.5"
+poll-promise = "0.3"
 
 axum = "0.7"
+axum-extra = { version = "0.9", features = ["cookie", "cookie-private"] }
 tokio = "1"
 tower-http = "0.5"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres"] }
 aws-sdk-s3 = "1"
 kube = { version = "0.95", default-features = false, features = ["client", "rustls-tls"] }
 k8s-openapi = { version = "0.23", features = ["v1_29"] }
+jsonwebtoken = "9"
+rsa = { version = "0.9", features = ["pem"] }
+webauthn-rs = { version = "0.5", features = ["danger-allow-state-serialisation"] }
+dashmap = "6"
+# The `metrics` facade crate matching metrics-adapter's own
+# axum-prometheus/metrics-exporter-prometheus versions, so idp-backend's
+# domain counters (auth attempts, tokens issued) land in the *same* global
+# recorder metrics-adapter installs -- one /metrics endpoint, not two.
+metrics = "0.23"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+# native-only (loopback OAuth flow for eframe standalone binaries)
+webbrowser = "1"
+keyring = { version = "3", features = ["sync-secret-service"] }
+ureq = "2"
