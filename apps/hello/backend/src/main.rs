@@ -7,6 +7,14 @@
 //! (the browser-side counterpart would use `ewebsock`, which -- like
 //! `ehttp` -- works unmodified on both native and wasm).
 //!
+//! Also serves this tool's own compiled wasm UI (`apps/hello/frontend`,
+//! built by the Dockerfile's `trunk` stage into `dist/`) as a fallback for
+//! any path that isn't one of the API routes below -- that's what makes
+//! this tool's own ingress host (`hello.k8s.lysakermoen.com`) render
+//! `HelloPanel` directly instead of exposing a bare API with nothing at
+//! `/`. Same pattern as `apps/portal/backend`, just one tool's UI instead
+//! of the unified one.
+//!
 //! CORS is wide open here because the portal's wasm UI is served from a
 //! different subdomain than this tool's own backend (subdomain-per-tool
 //! routing) and needs to call it directly from the browser. Tighten this to
@@ -21,6 +29,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use tower_http::cors::{Any, CorsLayer};
+use tower_http::services::{ServeDir, ServeFile};
 
 #[derive(Clone)]
 struct AppState {
@@ -64,6 +73,10 @@ async fn main() -> anyhow::Result<()> {
         .allow_methods(Any)
         .allow_headers(Any);
 
+    let static_dir = std::env::var("STATIC_DIR").unwrap_or_else(|_| "./dist".to_string());
+    let index_html = format!("{static_dir}/index.html");
+    let static_service = ServeDir::new(&static_dir).not_found_service(ServeFile::new(index_html));
+
     let app = Router::new()
         .route("/health", get(health))
         .route("/api/status", get(get_status))
@@ -72,11 +85,12 @@ async fn main() -> anyhow::Result<()> {
         .merge(metrics_router)
         .layer(metrics_layer)
         .layer(cors)
-        .with_state(state);
+        .with_state(state)
+        .fallback_service(static_service);
 
     let addr = std::env::var("LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0:8081".to_string());
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    tracing::info!("hello-backend listening on {addr}");
+    tracing::info!("hello-backend listening on {addr}, serving static assets from {static_dir}");
     axum::serve(listener, app).await?;
     Ok(())
 }

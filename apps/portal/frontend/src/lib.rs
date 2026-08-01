@@ -105,9 +105,20 @@ impl PortalApp {
         }
     }
 
+    /// Whether `id` has a compiled-in [`ToolPanel`] variant -- not every
+    /// registered tool does (e.g. `webhello`'s frontend is a plain static
+    /// page, not egui, so it has no panel to embed here; see
+    /// `apps/webhello/backend`). Used to decide whether the sidebar should
+    /// offer an inline "open panel" button or just a link out, same
+    /// treatment `HomePanel` already gives every tool.
+    fn has_panel(id: &str) -> bool {
+        matches!(id, "hello")
+    }
+
     /// Opens the compiled-in panel for a tool from the runtime registry.
     /// `link.id` must match one of the match arms here -- see
-    /// `docs/adding-a-tool.md`.
+    /// `docs/adding-a-tool.md`. Only call this when [`Self::has_panel`]
+    /// returns true for `link.id`.
     fn open_tool(&mut self, link: &ToolLink) {
         if let Some(existing) = self.open.get_mut(&link.id) {
             existing.visible = true;
@@ -118,7 +129,8 @@ impl PortalApp {
             other => {
                 tracing::warn!(
                     "no compiled-in panel for tool id `{other}`; add a ToolPanel variant in \
-                     apps/portal/frontend/src/lib.rs"
+                     apps/portal/frontend/src/lib.rs, or leave it out of `has_panel` if it's \
+                     meant to be link-out only"
                 );
                 return;
             }
@@ -159,8 +171,15 @@ impl eframe::App for PortalApp {
                     Some(Ok(links)) => {
                         let links = links.clone();
                         for link in &links {
-                            if ui.button(&link.name).clicked() {
-                                self.open_tool(link);
+                            if Self::has_panel(&link.id) {
+                                if ui.button(&link.name).clicked() {
+                                    self.open_tool(link);
+                                }
+                            } else {
+                                // No compiled-in panel for this tool (e.g.
+                                // webhello) -- link out instead of a dead
+                                // click, same treatment HomePanel gives it.
+                                ui.hyperlink_to(&link.name, &link.standalone_url);
                             }
                         }
                     }

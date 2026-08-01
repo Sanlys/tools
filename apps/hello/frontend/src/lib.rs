@@ -12,6 +12,17 @@
 //! portal resolves it at runtime from `/config/tools.json`
 //! ([`platform_config::ToolRegistry`]) instead of baking it into the wasm
 //! binary at compile time.
+//!
+//! This crate compiles to wasm two different ways: embedded as an `rlib`
+//! dependency inside `apps/portal/frontend`'s single unified `cdylib` (that
+//! wasm build uses an absolute, cross-origin `api_base_url` from the tool
+//! registry, since the portal and this tool are served from different
+//! subdomains), and standalone as its own `cdylib` via the
+//! `#[wasm_bindgen(start)]` below, built by `apps/hello/backend`'s
+//! Dockerfile and served at this tool's own ingress host -- that build uses
+//! an empty `api_base_url` (`""`), which resolves every request as a
+//! same-origin relative path, since `hello-backend` serves both the API and
+//! this compiled bundle itself.
 
 use platform_config::JsonResource;
 use platform_core::{Panel, PanelId};
@@ -145,4 +156,24 @@ impl Panel for HelloPanel {
             }
         }
     }
+}
+
+/// Mounts this tool standalone into the `<canvas id="the_canvas_id">` in
+/// `apps/hello/frontend/index.html`, talking to `hello-backend` on the same
+/// origin that serves this bundle. Runs automatically once the wasm module
+/// loads (trunk's generated glue calls `init()`, which triggers this) -- see
+/// `apps/portal/frontend/src/lib.rs`'s `start()` for the same pattern one
+/// level up (the unified portal, hosting many panels instead of just this
+/// one).
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen(start)]
+pub fn start() {
+    console_error_panic_hook::set_once();
+    tracing_wasm::set_as_global_default();
+
+    wasm_bindgen_futures::spawn_local(async {
+        platform_core::standalone::run_web("the_canvas_id", HelloPanel::new(""))
+            .await
+            .expect("failed to start eframe");
+    });
 }

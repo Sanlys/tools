@@ -30,12 +30,22 @@ env:
         {
           "id": "hello",
           "name": "Hello",
-          "description": "Reference example tool (Postgres + S3 + websocket).",
+          "description": "Reference example tool (Postgres + S3 + websocket, egui panel + standalone).",
           "standalone_url": "https://hello.k8s.lysakermoen.com",
           "api_base_url": "https://hello.k8s.lysakermoen.com",
           "health_path": "/health",
           "k8s_namespace": "tools-hello",
           "k8s_deployment": "tools-hello"
+        },
+        {
+          "id": "webhello",
+          "name": "Webhello",
+          "description": "Reference tool with a plain static HTML/JS frontend instead of egui -- link-out only, no portal panel.",
+          "standalone_url": "https://webhello.k8s.lysakermoen.com",
+          "api_base_url": "https://webhello.k8s.lysakermoen.com",
+          "health_path": "/health",
+          "k8s_namespace": "tools-webhello",
+          "k8s_deployment": "tools-webhello"
         }
       ]
 # Grants other tools' `dashboardGrant` something to bind to -- this
