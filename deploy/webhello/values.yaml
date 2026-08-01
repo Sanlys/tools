@@ -8,7 +8,7 @@ nameOverride: "webhello"
 fullnameOverride: ""
 image:
   repository: harbor.k8s.lysakermoen.com/tools/webhello-backend
-  tag: "769fa42e8abe27f0bbd51225ffcaf91f6e5eb00d"
+  tag: "2ed9b10e107655f4645b93a8aedfafc8abc623e5"
   pullPolicy: IfNotPresent
 # Not needed as long as the `tools` Harbor project allows anonymous pull --
 # see deploy/hello/values.yaml's comment.
