@@ -11,10 +11,12 @@ image:
   tag: "latest"
   pullPolicy: IfNotPresent
 
-# This cluster's Harbor is a private registry -- pulling from it needs a
-# docker-registry Secret named to match. That secret is namespace-scoped and
-# must be created out of band (this platform has no sops setup of its own);
-# see docs/ci-cd.md.
+# Only needed if the Harbor project a tool pulls from is private -- the
+# `library` project allows anonymous pull today (trilium-mcp in the
+# kubernetes repo pulls from it with no imagePullSecrets), so this is empty
+# by default. If a project ends up private, add a docker-registry Secret
+# (namespace-scoped, created out of band -- this platform has no sops setup
+# of its own) and reference it here.
 imagePullSecrets: []
 # - name: harbor-pull
 

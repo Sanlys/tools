@@ -7,11 +7,10 @@ image:
   tag: "latest"
   pullPolicy: IfNotPresent
 
-# Harbor is a private registry -- this secret must exist in the
-# tools-{{project-name}} namespace before the pod can pull. Not managed by
-# this chart; create it out of band. See deploy/hello/values.yaml.
-imagePullSecrets:
-  - name: harbor-pull
+# Not needed as long as the `tools` Harbor project allows anonymous pull --
+# see deploy/hello/values.yaml's comment. Only add one if it turns out to
+# be private.
+imagePullSecrets: []
 
 replicaCount: 1
 containerPort: {{container_port}}

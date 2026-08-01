@@ -9,14 +9,12 @@ image:
   tag: "latest"
   pullPolicy: IfNotPresent
 
-# Harbor is a private registry -- this secret must exist in the tools-hello
-# namespace before the pod can pull. It's not managed by this chart (no sops
-# setup in this repo yet); create it out of band, e.g.:
-#   kubectl create secret docker-registry harbor-pull \
-#     --namespace tools-hello --docker-server=harbor.k8s.lysakermoen.com \
-#     --docker-username=<robot account> --docker-password=<token>
-imagePullSecrets:
-  - name: harbor-pull
+# Not needed as long as the `tools` Harbor project allows anonymous pull,
+# same as `library` does today (trilium-mcp pulls from it with no
+# imagePullSecrets and works). Only add one if `tools` ends up private:
+#   imagePullSecrets:
+#     - name: harbor-pull   # kubectl create secret docker-registry harbor-pull ...
+imagePullSecrets: []
 
 replicaCount: 1
 containerPort: 8081

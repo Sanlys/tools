@@ -68,11 +68,13 @@ is enough on its own -- no manual `kubectl apply`, no editing the
 `release.yml`'s commits (which only touch `deploy/<app>/values.yaml`) are
 all ArgoCD needs to see to roll out a new image.
 
-Each tool also needs a `harbor-pull` image-pull Secret created in its own
-`tools-<app>` namespace before first deploy (Harbor is a private registry;
-see `deploy/hello/values.yaml`'s comment) -- this repo has no sops setup of
-its own, so that's a manual, out-of-band step per tool, same as the
-`REGISTRY_USERNAME`/`PASSWORD` secrets above.
+No image-pull Secret is needed as long as the `tools` Harbor project
+allows anonymous pull, same as `library` does today (`trilium-mcp` in the
+`kubernetes` repo pulls from `library` with no `imagePullSecrets` and
+works). If `tools` ends up private instead, each tool needs a
+`harbor-pull` Secret created in its own `tools-<app>` namespace -- this
+repo has no sops setup of its own, so that would be a manual, out-of-band
+step per tool. See `deploy/hello/values.yaml`'s comment.
 
 ### What's still a placeholder
 

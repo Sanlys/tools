@@ -13,10 +13,9 @@ image:
   tag: "latest"
   pullPolicy: IfNotPresent
 
-# See deploy/hello/values.yaml's comment -- same requirement, own namespace
-# (tools-portal).
-imagePullSecrets:
-  - name: harbor-pull
+# See deploy/hello/values.yaml's comment -- not needed unless `tools`
+# ends up a private Harbor project.
+imagePullSecrets: []
 
 replicaCount: 1
 containerPort: 8080
