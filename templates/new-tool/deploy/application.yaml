@@ -1,0 +1,25 @@
+# ArgoCD Application bootstrapping this chart. Plain manifest, not part of
+# the Helm chart itself -- see deploy/hello/application.yaml for why. Apply
+# once (by hand or from an app-of-apps root Application).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{project-name}}
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: "https://github.com/Sanlys/tools.git"
+    targetRevision: main
+    path: deploy/{{project-name}}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: tools
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

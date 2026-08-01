@@ -1,0 +1,12 @@
+[package]
+name = "k8s-adapter"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+api-types.workspace = true
+thiserror.workspace = true
+kube.workspace = true
+k8s-openapi.workspace = true

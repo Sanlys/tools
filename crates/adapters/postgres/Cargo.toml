@@ -1,0 +1,10 @@
+[package]
+name = "postgres-adapter"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+sqlx = { workspace = true, features = ["tls-rustls"] }

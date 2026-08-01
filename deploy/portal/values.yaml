@@ -1,0 +1,64 @@
+# Values for the unified portal app. Unlike a regular tool, the portal
+# needs `dashboardRbac.enabled: true` (to read Deployment readiness
+# cluster-wide) and a `TOOLS_REGISTRY_JSON` env var listing every deployed
+# tool -- see docs/adding-a-tool.md: adding a tool means adding an entry
+# here (and a ToolPanel variant in apps/portal/frontend).
+
+nameOverride: "portal"
+fullnameOverride: ""
+
+image:
+  repository: harbor.example.internal/tools/portal-backend
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+containerPort: 8080
+
+envFrom: []
+resources: {}
+
+env:
+  - name: TOOLS_REGISTRY_JSON
+    value: |
+      [
+        {
+          "id": "hello",
+          "name": "Hello",
+          "description": "Reference example tool (Postgres + S3 + websocket).",
+          "standalone_url": "https://hello.tools.example.com",
+          "api_base_url": "https://hello.tools.example.com",
+          "health_path": "/health",
+          "k8s_namespace": "tools",
+          "k8s_deployment": "hello"
+        }
+      ]
+
+dashboardRbac:
+  enabled: true
+
+ingress:
+  enabled: true
+  className: ""
+  host: tools.example.com
+  annotations: {}
+  tls:
+    enabled: false
+    secretName: ""
+
+bucket:
+  enabled: false
+
+postgres:
+  enabled: false
+
+monitoring:
+  enabled: true
+  interval: 30s
+  serviceMonitorLabels: {}
+  prometheusRuleLabels: {}
+  grafanaInstanceSelector:
+    matchLabels:
+      dashboards: grafana
+  alerts:
+    enabled: true

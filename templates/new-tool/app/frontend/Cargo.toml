@@ -1,0 +1,22 @@
+[package]
+name = "{{project-name}}-frontend"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "{{crate_name}}_frontend"
+path = "src/lib.rs"
+
+[[bin]]
+name = "{{project-name}}-standalone"
+path = "src/bin/standalone.rs"
+
+[dependencies]
+platform-core.workspace = true
+platform-config.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+egui.workspace = true
+ehttp.workspace = true

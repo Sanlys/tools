@@ -1,0 +1,12 @@
+[
+  {
+    "id": "hello",
+    "name": "Hello",
+    "description": "Reference example tool (Postgres + S3 + websocket).",
+    "standalone_url": "http://localhost:8081",
+    "api_base_url": "http://localhost:8081",
+    "health_path": "/health",
+    "k8s_namespace": null,
+    "k8s_deployment": null
+  }
+]

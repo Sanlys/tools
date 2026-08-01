@@ -1,0 +1,58 @@
+# This is a *library* chart -- Helm never reads this file for an actual
+# release. It documents the full values schema every consumer chart
+# (deploy/hello, deploy/portal, templates/new-tool/...) should provide in
+# its own values.yaml. See docs/adding-a-tool.md.
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: ""
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+containerPort: 8080
+
+# Extra plain env vars: [{name: FOO, value: "bar"}]
+env: []
+# Extra envFrom entries, appended after the bucket/postgres ones this chart
+# wires in automatically: [{configMapRef: {name: something}}]
+envFrom: []
+resources: {}
+
+# Only the portal sets this to true -- grants read-only cluster-wide access
+# to Deployments for the dashboard's k8s readiness check.
+dashboardRbac:
+  enabled: false
+
+ingress:
+  enabled: true
+  className: ""
+  host: ""
+  annotations: {}
+  tls:
+    enabled: false
+    secretName: ""
+
+bucket:
+  enabled: false
+  bucketName: ""
+  storageClassName: "rook-ceph-bucket"
+
+postgres:
+  enabled: false
+  image: postgres:16-alpine
+  storage: 1Gi
+  storageClassName: ""
+  database: ""
+
+monitoring:
+  enabled: false
+  interval: 30s
+  serviceMonitorLabels: {}
+  prometheusRuleLabels: {}
+  grafanaInstanceSelector:
+    matchLabels: {}
+  alerts:
+    enabled: true

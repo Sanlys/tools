@@ -1,0 +1,21 @@
+# Local dev: `trunk serve` from this directory. Run `cargo run -p portal-backend`
+# alongside it (defaults to 0.0.0.0:8080); the proxies below forward the
+# portal's own API calls to it so the wasm app can use relative URLs
+# (`/config/tools.json`, `/api/status`) exactly as it does in production,
+# where a single container serves both.
+[build]
+target = "index.html"
+dist = "dist"
+
+[serve]
+port = 1420
+open = false
+
+[[proxy]]
+backend = "http://127.0.0.1:8080/api"
+
+[[proxy]]
+backend = "http://127.0.0.1:8080/config"
+
+[[proxy]]
+backend = "http://127.0.0.1:8080/health"

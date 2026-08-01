@@ -1,0 +1,10 @@
+apiVersion: v2
+name: hello
+description: Reference example tool -- Postgres + S3 bucket + Prometheus/Grafana + websocket, deployed via the shared tool-library chart.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+dependencies:
+  - name: tool-library
+    version: 0.1.0
+    repository: "file://../charts/tool-library"
