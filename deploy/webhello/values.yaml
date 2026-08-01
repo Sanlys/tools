@@ -1,0 +1,65 @@
+# Values for the `webhello` example tool -- see apps/webhello/backend's
+# module doc for what it's demonstrating (a plain static HTML/JS frontend,
+# no egui/wasm). Copy deploy/hello/values.yaml's shape instead if your new
+# tool needs Postgres/S3/an egui panel; this one deliberately skips both to
+# keep the frontend-stack difference the point.
+
+nameOverride: "webhello"
+fullnameOverride: ""
+
+image:
+  repository: harbor.k8s.lysakermoen.com/tools/webhello-backend
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+# Not needed as long as the `tools` Harbor project allows anonymous pull --
+# see deploy/hello/values.yaml's comment.
+imagePullSecrets: []
+
+replicaCount: 1
+containerPort: 8082
+
+env: []
+envFrom: []
+resources:
+  requests:
+    cpu: 100m
+    memory: 64Mi
+  limits:
+    memory: 64Mi
+
+serviceAccount:
+  create: false
+
+# Lets the portal's dashboard read this Deployment's readiness -- a
+# namespace-scoped Role/RoleBinding in tools-webhello only, granted to the
+# portal's ServiceAccount (see deploy/portal/values.yaml).
+dashboardGrant:
+  enabled: true
+  subjectName: tools-portal
+  subjectNamespace: tools-portal
+
+ingress:
+  enabled: true
+  className: internal
+  host: webhello.k8s.lysakermoen.com
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-internal
+  tls:
+    enabled: true
+    secretName: webhello-internal-tls
+
+bucket:
+  enabled: false
+
+postgres:
+  enabled: false
+
+monitoring:
+  enabled: true
+  interval: 30s
+  serviceMonitorLabels: {}
+  prometheusRuleLabels: {}
+  dashboardNamespace: "monitoring"
+  alerts:
+    enabled: true

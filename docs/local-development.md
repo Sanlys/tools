@@ -87,12 +87,34 @@ proxy, which is why `hello-backend`'s CORS is wide open.
 
 ## 5. Run a tool standalone (no portal at all)
 
+Native window:
+
 ```sh
 cargo run -p hello-frontend --bin hello-standalone
 ```
 
 Opens a native window, defaulting to `http://localhost:8081`
 (`HELLO_API_BASE_URL` overrides it).
+
+Standalone wasm build (what `hello.k8s.lysakermoen.com` actually serves in
+prod):
+
+```sh
+cd apps/hello/frontend
+trunk serve
+```
+
+Open `http://localhost:1421`. `Trunk.toml`'s `[[proxy]]` entries forward
+`/api`, `/health`, and `/ws` to `localhost:8081` (step 2's `hello-backend`),
+so this build can use the same relative, same-origin URLs
+(`HelloPanel::new("")`) it uses in production, where `hello-backend` serves
+both the API and this compiled bundle from one container.
+
+`apps/webhello` has no wasm build at all -- it's a static page. Run its
+backend (`cargo run -p webhello-backend`, defaulting to `0.0.0.0:8082`) and
+open `http://localhost:8082` directly; `STATIC_DIR` defaults to `./static`
+relative to the process's cwd, so run it from `apps/webhello/backend/` (or
+set `STATIC_DIR` explicitly) rather than the repo root.
 
 ## 6. Run the IDP locally (to test auth end to end)
 
@@ -124,6 +146,7 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo check --target wasm32-unknown-unknown -p portal-frontend --lib
+cargo check --target wasm32-unknown-unknown -p hello-frontend --lib
 ```
 
 `ci.yml` runs exactly these (plus `helm lint`/`helm template` on every

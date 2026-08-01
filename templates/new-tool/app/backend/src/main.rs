@@ -4,9 +4,12 @@
 //! Postgres, an S3 bucket, and Prometheus metrics exactly like
 //! `apps/hello/backend` does -- delete whichever of those you don't need,
 //! along with the matching `bucket`/`postgres` blocks in
-//! `deploy/{{project-name}}/values.yaml`. See docs/adding-a-tool.md for the
-//! full checklist (workspace member, portal panel, tools registry, RBAC/DNS
-//! if needed).
+//! `deploy/{{project-name}}/values.yaml`. Also serves this tool's own
+//! compiled wasm UI (`apps/{{project-name}}/frontend`, built by the
+//! Dockerfile's `trunk` stage) as a fallback for any path that isn't one of
+//! the API routes below, same as `apps/hello/backend`. See
+//! docs/adding-a-tool.md for the full checklist (workspace member, portal
+//! panel, tools registry, RBAC/DNS if needed).
 
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -15,6 +18,7 @@ use axum::routing::get;
 use axum::{Json, Router};
 use serde::Serialize;
 use tower_http::cors::{Any, CorsLayer};
+use tower_http::services::{ServeDir, ServeFile};
 
 #[derive(Clone)]
 struct AppState {
@@ -53,17 +57,22 @@ async fn main() -> anyhow::Result<()> {
         .allow_methods(Any)
         .allow_headers(Any);
 
+    let static_dir = std::env::var("STATIC_DIR").unwrap_or_else(|_| "./dist".to_string());
+    let index_html = format!("{static_dir}/index.html");
+    let static_service = ServeDir::new(&static_dir).not_found_service(ServeFile::new(index_html));
+
     let app = Router::new()
         .route("/health", get(health))
         .route("/api/status", get(get_status))
         .merge(metrics_router)
         .layer(metrics_layer)
         .layer(cors)
-        .with_state(state);
+        .with_state(state)
+        .fallback_service(static_service);
 
     let addr = std::env::var("LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0:{{container_port}}".to_string());
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    tracing::info!("{{project-name}}-backend listening on {addr}");
+    tracing::info!("{{project-name}}-backend listening on {addr}, serving static assets from {static_dir}");
     axum::serve(listener, app).await?;
     Ok(())
 }

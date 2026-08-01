@@ -13,6 +13,17 @@
 //! ([`platform_config::ToolRegistry`]) instead of baking it into the wasm
 //! binary at compile time.
 //!
+//! This crate compiles to wasm two different ways: embedded as an `rlib`
+//! dependency inside `apps/portal/frontend`'s single unified `cdylib` (that
+//! wasm build uses an absolute, cross-origin `api_base_url` from the tool
+//! registry, since the portal and this tool are served from different
+//! subdomains), and standalone as its own `cdylib` via the
+//! `#[wasm_bindgen(start)]` below, built by `apps/hello/backend`'s
+//! Dockerfile and served at this tool's own ingress host -- that build uses
+//! an empty `api_base_url` (`""`), which resolves every request as a
+//! same-origin relative path, since `hello-backend` serves both the API and
+//! this compiled bundle itself.
+//!
 //! This is also the reference implementation of "a tool with an auth-gated
 //! action": it carries its own [`auth_adapter`] `LoginWidget`, scoped to
 //! *this app's own* `client_id` ("hello", per `deploy/idp/values.yaml`) --
@@ -251,4 +262,32 @@ impl Panel for HelloPanel {
             );
         }
     }
+}
+
+/// Mounts this tool standalone into the `<canvas id="the_canvas_id">` in
+/// `apps/hello/frontend/index.html`, talking to `hello-backend` on the same
+/// origin that serves this bundle. Runs automatically once the wasm module
+/// loads (trunk's generated glue calls `init()`, which triggers this) -- see
+/// `apps/portal/frontend/src/lib.rs`'s `start()` for the same pattern one
+/// level up (the unified portal, hosting many panels instead of just this
+/// one).
+///
+/// Gated behind the `standalone` feature (on by default -- see this
+/// crate's Cargo.toml) rather than just `target_arch = "wasm32"`: this
+/// crate is *also* linked into `apps/portal/frontend`'s own wasm bundle as
+/// a plain rlib dependency (to embed `HelloPanel`), and two
+/// `#[wasm_bindgen(start)]` exports in the same wasm module is a linker
+/// error, not just a harmless double-init. The portal depends on this
+/// crate with `default-features = false` specifically to leave this out.
+#[cfg(all(target_arch = "wasm32", feature = "standalone"))]
+#[wasm_bindgen::prelude::wasm_bindgen(start)]
+pub fn start() {
+    console_error_panic_hook::set_once();
+    tracing_wasm::set_as_global_default();
+
+    wasm_bindgen_futures::spawn_local(async {
+        platform_core::standalone::run_web("the_canvas_id", HelloPanel::new(""))
+            .await
+            .expect("failed to start eframe");
+    });
 }

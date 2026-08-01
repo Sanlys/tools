@@ -11,6 +11,7 @@ members = [
     "crates/adapters/auth",
     "apps/hello/backend",
     "apps/hello/frontend",
+    "apps/webhello/backend",
     "apps/portal/backend",
     "apps/portal/frontend",
     "apps/idp/backend",
@@ -32,7 +33,15 @@ postgres-adapter = { path = "crates/adapters/postgres" }
 k8s-adapter = { path = "crates/adapters/k8s" }
 metrics-adapter = { path = "crates/adapters/metrics" }
 auth-adapter = { path = "crates/adapters/auth" }
-hello-frontend = { path = "apps/hello/frontend" }
+# default-features = false since apps/portal/frontend is the only
+# consumer of this as a *library* dependency, and needs the "standalone"
+# feature (hello-frontend's own #[wasm_bindgen(start)] entry point) off to
+# avoid a wasm linker collision with the portal's own start() -- see
+# apps/hello/frontend/Cargo.toml. Building hello-frontend itself directly
+# (its own trunk build, or `cargo build -p hello-frontend`) is unaffected:
+# a package's own [features].default always applies to itself regardless
+# of what other members request of it via workspace-dependency inheritance.
+hello-frontend = { path = "apps/hello/frontend", default-features = false }
 
 # shared external deps (kept in one place so every crate/app stays in
 # lockstep; a member adds its own extra features via

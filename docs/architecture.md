@@ -24,9 +24,13 @@ apps/
   portal/             -- the unified web app (see below)
     backend           -- axum: serves the wasm bundle, tool registry, dashboard status
     frontend          -- egui/eframe, compiles to wasm, hosts every tool's panel
-  hello/              -- reference example tool exercising every adapter
+  hello/              -- reference example tool exercising every adapter,
+                          egui panel + standalone wasm build
     backend
     frontend
+  webhello/           -- reference tool with a plain static HTML/JS frontend
+                          instead of egui -- see "Standalone tools" below
+    backend
   idp/                -- the platform's own OIDC provider + WebAuthn passkey login
     backend           -- axum: OIDC endpoints, WebAuthn ceremonies, Postgres
     frontend          -- plain static HTML/CSS/JS (not egui -- see "Auth" below)
@@ -34,8 +38,8 @@ apps/
 deploy/
   charts/tool-library -- shared Helm library chart (Deployment, Service, Ingress,
                           bucket claim, Postgres, ServiceMonitor, PrometheusRule,
-                          GrafanaDashboard, dashboard RBAC)
-  hello/, portal/     -- per-app charts + values.yaml + a standalone ArgoCD Application
+                          dashboard ConfigMap, per-namespace dashboard RBAC grant)
+  hello/, webhello/, portal/, idp/ -- per-app charts + values.yaml + an ArgoCD Application
 
 templates/new-tool/   -- cargo-generate template scaffolding a new tool's app + chart
 
@@ -49,7 +53,9 @@ single wasm binary and is also runnable natively. It hosts three kinds of
 panel, all implementing the same `platform_core::Panel` trait:
 
 - **Home** -- links out to every tool's standalone deployment (subdomain
-  per tool).
+  per tool). Every registered tool gets a working link here regardless of
+  whether it has a compiled-in panel (see "Standalone tools" below) --
+  `webhello` shows up this way, with no `ToolPanel` variant at all.
 - **Dashboard** -- per-tool health, combining an HTTP health-check hit and
   Kubernetes Deployment readiness.
 - **One panel per tool** -- e.g. `hello_frontend::HelloPanel`. Multiple
@@ -71,12 +77,32 @@ across dev/staging/prod and across whatever subdomains you deploy tools at.
 
 ## Standalone tools
 
-Every tool also gets a native standalone binary for free:
-`platform_core::standalone::run(YourPanel::new(...))` wraps any `Panel` in
-its own eframe window. A tool can additionally ship a completely different
-frontend stack (iced, a plain web UI, whatever) if egui doesn't fit -- the
-platform doesn't require it, it just makes egui the path of least
-resistance.
+Every egui tool gets two standalone builds for free, both via
+`platform_core::standalone`:
+
+- **Native**: `standalone::run(YourPanel::new(...))` wraps any `Panel` in
+  its own eframe window (`apps/hello/frontend/src/bin/standalone.rs`).
+- **Wasm**: `standalone::run_web("the_canvas_id", YourPanel::new(""))`,
+  called from a `#[wasm_bindgen(start)]` function in the tool's own
+  `lib.rs`, mounts the same panel into a browser canvas -- this is what
+  makes a tool's own ingress host (e.g. `hello.k8s.lysakermoen.com`) render
+  its panel directly instead of exposing a bare API with nothing at `/`.
+  Needs the tool's own `index.html`/`Trunk.toml` (mirroring the portal's)
+  and a `trunk build` stage in its backend's Dockerfile that serves the
+  compiled `dist/` as a fallback for unmatched routes -- see
+  `apps/hello/frontend` and `apps/hello/backend`'s Dockerfile/`main.rs` for
+  the full reference wiring. Uses an empty (`""`) `api_base_url` rather
+  than an absolute one: since the tool's own backend serves this bundle,
+  every API call resolves as a same-origin relative path.
+
+A tool can also ship a completely different frontend stack (iced, a plain
+web UI, whatever) if egui doesn't fit -- the platform doesn't require it,
+it just makes egui the path of least resistance. `apps/webhello` is the
+reference example: a hand-written static HTML page with plain `fetch()`
+calls, no wasm/build step, no `Panel` impl, and correspondingly no
+`ToolPanel` variant in the portal -- it only shows up via the portal's Home
+link-out list, the same way a tool with an unreachable/broken standalone
+build would (the difference is `webhello`'s actually works).
 
 ## Backends
 

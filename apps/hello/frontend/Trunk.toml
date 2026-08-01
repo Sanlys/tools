@@ -1,0 +1,23 @@
+# Local dev: `trunk serve` from this directory. Run `cargo run -p hello-backend`
+# alongside it (defaults to 0.0.0.0:8081); the proxies below forward this
+# tool's own API calls to it so the wasm app can use relative URLs exactly as
+# it does in production, where hello-backend serves both the API and this
+# compiled bundle from one container. See apps/portal/frontend/Trunk.toml for
+# the same pattern one level up.
+[build]
+target = "index.html"
+dist = "dist"
+
+[serve]
+port = 1421
+open = false
+
+[[proxy]]
+backend = "http://127.0.0.1:8081/api"
+
+[[proxy]]
+backend = "http://127.0.0.1:8081/health"
+
+[[proxy]]
+backend = "http://127.0.0.1:8081/ws"
+ws = true

@@ -31,6 +31,9 @@ jobs:
           - name: hello
             dockerfile: apps/hello/backend/Dockerfile
             image: hello-backend
+          - name: webhello
+            dockerfile: apps/webhello/backend/Dockerfile
+            image: webhello-backend
           - name: portal
             dockerfile: apps/portal/backend/Dockerfile
             image: portal-backend

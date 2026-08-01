@@ -2411,12 +2411,16 @@ name = "hello-frontend"
 version = "0.1.0"
 dependencies = [
  "auth-adapter",
+ "console_error_panic_hook",
  "egui",
  "ehttp",
  "platform-config",
  "platform-core",
  "serde",
  "serde_json",
+ "tracing-wasm",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
 ]
 
 [[package]]
@@ -4200,6 +4204,8 @@ dependencies = [
  "eframe",
  "egui",
  "serde",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
@@ -6560,6 +6566,21 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "url",
  "web-sys",
+]
+
+[[package]]
+name = "webhello-backend"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "metrics-adapter",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower-http 0.5.2",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

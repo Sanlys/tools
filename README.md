@@ -37,7 +37,7 @@ Full walkthrough, standalone UIs, and the known rough edges:
 
 ```
 crates/            shared adapters + the egui Panel contract
-apps/               portal (unified app) + hello (reference example tool)
+apps/               portal (unified app) + hello (egui reference tool) + webhello (plain-web-frontend reference tool)
 deploy/            Helm charts (shared library + one per app) + ArgoCD Applications
 templates/new-tool/ cargo-generate template for scaffolding a new tool
 .github/workflows/  CI (build/test/lint) + CD (build, push, GitOps bump)

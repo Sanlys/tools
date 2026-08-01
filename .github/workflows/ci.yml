@@ -39,6 +39,9 @@ jobs:
       - name: wasm build (portal, which pulls in every tool's frontend crate)
         run: cargo build --target wasm32-unknown-unknown -p portal-frontend --lib
 
+      - name: wasm build (hello's own standalone bundle, separate cdylib from portal's)
+        run: cargo build --target wasm32-unknown-unknown -p hello-frontend --lib
+
   helm:
     runs-on: ubuntu-latest
     steps:
@@ -65,6 +68,8 @@ jobs:
         include:
           - name: hello-backend
             dockerfile: apps/hello/backend/Dockerfile
+          - name: webhello-backend
+            dockerfile: apps/webhello/backend/Dockerfile
           - name: portal-backend
             dockerfile: apps/portal/backend/Dockerfile
           - name: idp-backend
