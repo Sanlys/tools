@@ -1,41 +1,59 @@
-# Reference values for the `hello` example tool. Copy this file's shape
-# for a new tool -- see docs/adding-a-tool.md.
+# Values for the `hello` example tool. Copy this file's shape for a new
+# tool -- see docs/adding-a-tool.md.
 
 nameOverride: "hello"
 fullnameOverride: ""
 
 image:
-  # Placeholder -- point at your real registry (Harbor) before deploying.
-  repository: harbor.example.internal/tools/hello-backend
+  repository: harbor.k8s.lysakermoen.com/tools/hello-backend
   tag: "latest"
   pullPolicy: IfNotPresent
+
+# Harbor is a private registry -- this secret must exist in the tools-hello
+# namespace before the pod can pull. It's not managed by this chart (no sops
+# setup in this repo yet); create it out of band, e.g.:
+#   kubectl create secret docker-registry harbor-pull \
+#     --namespace tools-hello --docker-server=harbor.k8s.lysakermoen.com \
+#     --docker-username=<robot account> --docker-password=<token>
+imagePullSecrets:
+  - name: harbor-pull
 
 replicaCount: 1
 containerPort: 8081
 
 env: []
 envFrom: []
-resources: {}
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 128Mi
 
-dashboardRbac:
-  enabled: false
+serviceAccount:
+  create: false
+
+# Lets the portal's dashboard read this Deployment's readiness -- a
+# namespace-scoped Role/RoleBinding in tools-hello only, granted to the
+# portal's ServiceAccount (see deploy/portal/values.yaml).
+dashboardGrant:
+  enabled: true
+  subjectName: tools-portal
+  subjectNamespace: tools-portal
 
 ingress:
   enabled: true
-  # Left blank so the cluster's default IngressClass is used -- set this
-  # explicitly if you have more than one. See docs/architecture.md for the
-  # "adjust to your ingress controller" checklist (this is an example only).
-  className: ""
-  host: hello.tools.example.com
-  annotations: {}
+  className: internal
+  host: hello.k8s.lysakermoen.com
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-internal
   tls:
-    enabled: false
-    secretName: ""
+    enabled: true
+    secretName: hello-internal-tls
 
 bucket:
   enabled: true
-  # rook-ceph appends a random suffix to this prefix (generateBucketName).
-  bucketName: hello
+  bucketName: tools-hello
   # Must match the name of your rook-ceph bucket StorageClass.
   storageClassName: rook-ceph-bucket
 
@@ -43,18 +61,23 @@ postgres:
   enabled: true
   image: postgres:16-alpine
   storage: 1Gi
-  storageClassName: ""
+  storageClassName: rook-ceph-block-ssd
   database: hello
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 256Mi
 
 monitoring:
   enabled: true
   interval: 30s
-  # Set these to match your Prometheus Operator's serviceMonitorSelector /
-  # ruleSelector if it doesn't pick these up by default.
+  # This cluster's Prometheus Operator watches ServiceMonitors/PrometheusRules
+  # cluster-wide with an empty selector, so no specific label is required --
+  # left here in case that ever changes.
   serviceMonitorLabels: {}
   prometheusRuleLabels: {}
-  grafanaInstanceSelector:
-    matchLabels:
-      dashboards: grafana
+  dashboardNamespace: "monitoring"
   alerts:
     enabled: true

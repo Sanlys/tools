@@ -29,15 +29,9 @@ run or configure.
 ```yaml
 bucket:
   enabled: true
-  bucketName: my-tool       # generateBucketName prefix -- rook appends a random suffix
+  bucketName: tools-my-tool   # fixed name -- one namespace per tool already makes it unique
   storageClassName: rook-ceph-bucket   # must match your rook-ceph bucket StorageClass
 ```
-
-`generateBucketName` (rather than a fixed `bucketName` in the OBC spec) is
-used deliberately so bucket names don't collide across namespaces/
-environments. If a tool genuinely needs a stable, predictable bucket name,
-change `templates/_objectbucketclaim.tpl` to use `bucketName` instead for
-that one chart.
 
 ## Credential scoping
 

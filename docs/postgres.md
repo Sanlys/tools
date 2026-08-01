@@ -17,7 +17,7 @@ postgres:
   enabled: true
   image: postgres:16-alpine
   storage: 1Gi
-  storageClassName: ""     # blank = cluster default StorageClass
+  storageClassName: rook-ceph-block-ssd   # no cluster-default SC exists; must be set explicitly
   database: my_tool
 ```
 

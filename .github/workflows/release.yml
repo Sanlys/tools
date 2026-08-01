@@ -6,7 +6,7 @@ name: release
 # See docs/ci-cd.md.
 #
 # Requires these repository secrets/variables to actually push anywhere:
-#   vars.REGISTRY_HOST      e.g. harbor.example.internal
+#   vars.REGISTRY_HOST      harbor.k8s.lysakermoen.com
 #   secrets.REGISTRY_USERNAME
 #   secrets.REGISTRY_PASSWORD
 # Until those are set, this workflow will fail at the login step -- that's

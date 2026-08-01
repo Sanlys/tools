@@ -81,29 +81,41 @@ or a websocket (`apps/hello/backend`'s `/ws` demonstrates the pattern;
 `ewebsock` is the wasm+native-compatible client-side counterpart to
 `ehttp` if a tool's frontend needs to consume one).
 
-## What's ingress-controller-agnostic vs. cluster-specific
+## What's cluster-specific here
 
-This scaffolding was built without direct access to the real cluster
-config, so several things are deliberately generic placeholders you should
-adjust:
+This now targets the real homelab cluster (Talos + Argo CD, see the
+`kubernetes` repo's `CLAUDE.md`) rather than generic placeholders:
 
-- `ingress.className`/`ingress.annotations` in every chart's `values.yaml`
-  -- currently empty/no controller-specific annotations. Set these to match
-  whatever's actually fronting the cluster (Traefik, nginx-ingress, ...).
-- `monitoring.grafanaInstanceSelector` and
-  `monitoring.serviceMonitorLabels`/`prometheusRuleLabels` -- must match
-  your actual Grafana CR's `instanceSelector` and Prometheus Operator's
-  `serviceMonitorSelector`/`ruleSelector` labels.
+- Ingress: `ingressClassName: internal` (nginx-ingress,
+  `*.k8s.lysakermoen.com`) or `public` (`*.lysakermoen.com`), with the
+  matching `cert-manager.io/cluster-issuer` annotation
+  (`letsencrypt-internal`/`-public`) -- set per tool in its own
+  `values.yaml`, see `deploy/hello/values.yaml`.
+- Monitoring: this cluster's Prometheus Operator (kube-prometheus-stack)
+  watches `ServiceMonitor`/`PrometheusRule` cluster-wide with an empty
+  selector, so `monitoring.serviceMonitorLabels`/`prometheusRuleLabels` can
+  stay empty. There's no grafana-operator/`GrafanaDashboard` CRD --
+  dashboards are plain `ConfigMap`s labeled `grafana_dashboard: "1"` in the
+  `monitoring` namespace (`monitoring.dashboardNamespace`), picked up by
+  Grafana's sidecar. See `docs/observability.md`.
 - `image.repository` in every `values.yaml` and `vars.REGISTRY_HOST` in
-  `.github/workflows/release.yml` -- placeholder Harbor hostnames.
-- `deploy/*/application.yaml`'s `repoURL`/`project`/`destination` -- adjust
-  to your actual ArgoCD project and repo URL.
-- The Kubernetes distribution itself (k3s/kubeadm/etc) -- nothing here
-  assumes a specific one; the k8s API usage (Deployments, RBAC,
-  ObjectBucketClaim, ServiceMonitor, PrometheusRule, GrafanaDashboard) is
-  distro-agnostic, but the Operators providing those CRDs
-  (rook-ceph, Prometheus Operator, grafana-operator, ArgoCD) must be
-  installed for the corresponding `values.yaml` toggles to do anything.
+  `.github/workflows/release.yml` point at this cluster's Harbor
+  (`harbor.k8s.lysakermoen.com`, project `tools` -- must be created there
+  before first push).
+- `deploy/*/app.yaml`'s `repoURL`/`project`/`destination` point at
+  `github.com/Sanlys/tools`, the `default` ArgoCD project, and each tool's
+  own `tools-<name>` namespace. These `app.yaml`s are auto-discovered via
+  `cluster/prod/apps/tools/app.yaml` in the `kubernetes` repo (an
+  app-of-apps "tools root" Application) -- see `docs/ci-cd.md`.
+- Storage: `bucket.storageClassName: rook-ceph-bucket` and
+  `postgres.storageClassName: rook-ceph-block-ssd` are this cluster's real
+  StorageClasses -- neither has a cluster-default StorageClass to fall back
+  on, so both must stay explicit.
+- Dashboard RBAC (portal reading other tools' Deployment readiness) is
+  namespace-scoped, not cluster-wide: each tool that wants to appear in the
+  dashboard grants the portal's ServiceAccount a `Role`/`RoleBinding` in
+  its *own* namespace only (`dashboardGrant` in that tool's `values.yaml`),
+  rather than the portal holding a `ClusterRole`.
 
 ## Porting the IDP
 

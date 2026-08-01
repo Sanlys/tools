@@ -6,9 +6,10 @@ Secret *of the same name* with the connection details -- which is exactly
 what crates/adapters/s3 reads via envFrom on this Deployment. There's no
 platform-side operator or API service involved; rook does all of it.
 
-`generateBucketName` (rather than a fixed `bucketName`) appends a random
-suffix so bucket names don't collide across namespaces/environments -- see
-docs/s3-buckets.md.
+A fixed `bucketName` (matching every other ObjectBucketClaim in this
+cluster, e.g. media/syncthing's) rather than `generateBucketName` -- one
+namespace per tool already makes the name unique, so a random suffix just
+makes the bucket harder to reference by a predictable name.
 */}}
 {{- define "tool-library.objectbucketclaim" -}}
 {{- if .Values.bucket.enabled }}
@@ -19,7 +20,7 @@ metadata:
   labels:
     {{- include "tool-library.labels" . | nindent 4 }}
 spec:
-  generateBucketName: {{ .Values.bucket.bucketName }}
+  bucketName: {{ .Values.bucket.bucketName }}
   storageClassName: {{ .Values.bucket.storageClassName }}
 {{- end }}
 {{- end -}}

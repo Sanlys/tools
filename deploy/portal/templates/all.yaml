@@ -10,4 +10,6 @@
 ---
 {{ include "tool-library.grafanadashboard" . }}
 ---
-{{ include "tool-library.dashboardRbac" . }}
+{{ include "tool-library.serviceAccount" . }}
+---
+{{ include "tool-library.dashboardGrant" . }}

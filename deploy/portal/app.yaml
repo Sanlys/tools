@@ -1,12 +1,11 @@
-# ArgoCD Application bootstrapping deploy/hello. This is a plain manifest,
-# not part of the Helm chart it points to (an Application can't sensibly
-# live inside the release it manages) -- apply it once, by hand or from an
-# "app of apps" root Application, to have ArgoCD start tracking this chart.
-# See docs/ci-cd.md for the full GitOps flow.
+# See deploy/hello/app.yaml for why this lives outside the chart and how
+# it gets picked up (auto-discovered via the kubernetes repo's
+# cluster/prod/apps/tools/app.yaml "tools root" Application, not applied by
+# hand).
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: hello
+  name: tools-portal
   namespace: argocd
   finalizers:
     - resources-finalizer.argocd.argoproj.io
@@ -15,10 +14,10 @@ spec:
   source:
     repoURL: "https://github.com/Sanlys/tools.git"
     targetRevision: main
-    path: deploy/hello
+    path: deploy/portal
   destination:
     server: https://kubernetes.default.svc
-    namespace: tools
+    namespace: tools-portal
   syncPolicy:
     automated:
       prune: true

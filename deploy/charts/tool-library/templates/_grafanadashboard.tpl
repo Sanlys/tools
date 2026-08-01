@@ -1,23 +1,25 @@
 {{/*
-A minimal starter dashboard (request rate, p99 latency, up/down) via
-grafana-operator's GrafanaDashboard CRD. `instanceSelector` must match the
-labels on your Grafana CR -- set `monitoring.grafanaInstanceSelector` to
-whatever that is; the default here is just a common convention, not a
-guarantee it matches your install.
+A minimal starter dashboard (request rate, p99 latency, up/down), provisioned
+the kube-prometheus-stack way: a plain ConfigMap labeled `grafana_dashboard:
+"1"` that Grafana's sidecar picks up automatically -- there's no
+grafana-operator/GrafanaDashboard CRD in this cluster. The sidecar only
+watches its own release namespace (`monitoring` by default -- see
+cluster/prod/platform/monitoring/grafana-dashboards), so this ConfigMap is
+deliberately created there rather than in the app's own namespace; set
+`monitoring.dashboardNamespace` if yours differs.
 */}}
 {{- define "tool-library.grafanadashboard" -}}
 {{- if .Values.monitoring.enabled }}
-apiVersion: grafana.integreatly.org/v1beta1
-kind: GrafanaDashboard
+apiVersion: v1
+kind: ConfigMap
 metadata:
-  name: {{ include "tool-library.fullname" . }}
+  name: {{ include "tool-library.fullname" . }}-dashboard
+  namespace: {{ .Values.monitoring.dashboardNamespace | default "monitoring" }}
   labels:
     {{- include "tool-library.labels" . | nindent 4 }}
-spec:
-  instanceSelector:
-    matchLabels:
-      {{- toYaml .Values.monitoring.grafanaInstanceSelector.matchLabels | nindent 6 }}
-  json: |
+    grafana_dashboard: "1"
+data:
+  {{ include "tool-library.fullname" . }}.json: |
     {{- include "tool-library.grafanaDashboardJson" . | nindent 4 }}
 {{- end }}
 {{- end -}}

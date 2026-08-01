@@ -3,48 +3,74 @@ fullnameOverride: ""
 
 image:
   # Placeholder -- point at your real registry (Harbor) before deploying.
-  repository: harbor.example.internal/tools/{{project-name}}-backend
+  repository: harbor.k8s.lysakermoen.com/tools/{{project-name}}-backend
   tag: "latest"
   pullPolicy: IfNotPresent
+
+# Harbor is a private registry -- this secret must exist in the
+# tools-{{project-name}} namespace before the pod can pull. Not managed by
+# this chart; create it out of band. See deploy/hello/values.yaml.
+imagePullSecrets:
+  - name: harbor-pull
 
 replicaCount: 1
 containerPort: {{container_port}}
 
 env: []
 envFrom: []
-resources: {}
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 128Mi
 
-dashboardRbac:
+serviceAccount:
+  create: false
+
+# Set to true (and fill in the portal's ServiceAccount name/namespace) to
+# let this tool show up in the portal's dashboard -- see
+# deploy/hello/values.yaml.
+dashboardGrant:
   enabled: false
+  subjectName: tools-portal
+  subjectNamespace: tools-portal
 
 ingress:
   enabled: true
-  className: ""
-  host: {{project-name}}.tools.example.com
-  annotations: {}
+  # "internal" or "public" -- see the ingress section of the kubernetes
+  # repo's CLAUDE.md for which to pick.
+  className: internal
+  host: {{project-name}}.k8s.lysakermoen.com
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-internal
   tls:
-    enabled: false
-    secretName: ""
+    enabled: true
+    secretName: {{project-name}}-internal-tls
 
 bucket:
   enabled: {{needs_bucket}}
-  bucketName: {{project-name}}
+  bucketName: tools-{{project-name}}
   storageClassName: rook-ceph-bucket
 
 postgres:
   enabled: {{needs_postgres}}
   image: postgres:16-alpine
   storage: 1Gi
-  storageClassName: ""
+  storageClassName: rook-ceph-block-ssd
   database: {{project-name | snake_case}}
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 256Mi
 
 monitoring:
   enabled: true
   interval: 30s
   serviceMonitorLabels: {}
   prometheusRuleLabels: {}
-  grafanaInstanceSelector:
-    matchLabels:
-      dashboards: grafana
+  dashboardNamespace: "monitoring"
   alerts:
     enabled: true

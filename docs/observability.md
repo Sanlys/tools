@@ -1,9 +1,10 @@
 # Observability
 
 Every tool gets Prometheus metrics, alerting rules, and a Grafana
-dashboard for free by setting `monitoring.enabled: true` -- assuming your
-cluster already runs the Prometheus Operator (kube-prometheus-stack) and
-grafana-operator, which this scaffolding assumes but doesn't install.
+dashboard for free by setting `monitoring.enabled: true` -- this assumes
+the cluster's Prometheus Operator (kube-prometheus-stack) and Grafana
+(same chart, sidecar dashboard provisioning), both already running; see
+`cluster/prod/platform/monitoring` in the `kubernetes` repo.
 
 ## Metrics endpoint
 
@@ -28,31 +29,28 @@ let app = Router::new()
 scraping `/metrics` on the interval set by `monitoring.interval` (default
 `30s`).
 
-**Your Prometheus Operator install almost certainly only watches
-`ServiceMonitor`s matching a specific label** (its
-`serviceMonitorSelector`). Set `monitoring.serviceMonitorLabels` in the
-tool's `values.yaml` to match it, or the ServiceMonitor will be created but
-silently never scraped.
+This cluster's Prometheus Operator watches `ServiceMonitor`s/
+`PrometheusRule`s cluster-wide with an empty selector
+(`serviceMonitorSelector: {}` in `kube-prometheus-stack`'s values), so
+`monitoring.serviceMonitorLabels`/`prometheusRuleLabels` can stay empty --
+they're there in case that selector ever gets narrowed.
 
 ## Alerting
 
 `prometheusrule.yaml` renders two starter alerts per tool: `<Name>Down`
 (no successful scrape for 5 minutes) and `<Name>HighErrorRate` (5xx rate
 above 5% for 10 minutes, using the `axum_http_requests_total` metric
-`axum-prometheus` produces). Same caveat as above:
-`monitoring.prometheusRuleLabels` must match your Prometheus Operator's
-`ruleSelector`, and the alert expressions assume `job` equals the
-Service/ServiceMonitor name (the kube-prometheus-stack default -- adjust
-if your relabeling differs).
+`axum-prometheus` produces). The alert expressions assume `job` equals the
+Service/ServiceMonitor name (the kube-prometheus-stack default).
 
 ## Dashboard
 
-`grafanadashboard.yaml` renders a `GrafanaDashboard`
-(`grafana.integreatly.org/v1beta1`, grafana-operator) with three panels:
-request rate by status code, p99 latency, and an up/down stat. Set
-`monitoring.grafanaInstanceSelector` to match your Grafana CR's
-`instanceSelector` labels, or grafana-operator won't attach the dashboard
-to any Grafana instance.
+There's no grafana-operator/`GrafanaDashboard` CRD in this cluster.
+`grafanadashboard.yaml` instead renders a plain `ConfigMap` labeled
+`grafana_dashboard: "1"` in the `monitoring` namespace
+(`monitoring.dashboardNamespace`) -- Grafana's bundled sidecar
+(kube-prometheus-stack) picks it up automatically from there. Three
+panels: request rate by status code, p99 latency, and an up/down stat.
 
 ## The platform dashboard (in `apps/portal`)
 
@@ -68,9 +66,17 @@ computes, per tool in the registry:
 
 and combines them into a `Healthy`/`Degraded`/`Down`/`Unknown` verdict,
 which `DashboardPanel` in the portal's egui UI polls every 10 seconds.
-This only needs the portal's own `dashboardRbac.enabled: true`
-(read-only, cluster-wide `get`/`list`/`watch` on Deployments) -- it doesn't
-talk to Prometheus at all.
+It doesn't talk to Prometheus at all.
+
+Reading Deployment readiness needs RBAC, but not a cluster-wide
+`ClusterRole`: the portal sets `serviceAccount.create: true` to get its own
+ServiceAccount, and each tool it should be able to see opts in with
+`dashboardGrant.enabled: true` in *that tool's own* `values.yaml`, pointing
+at the portal's ServiceAccount name/namespace. That renders a namespaced
+`Role`/`RoleBinding` in the tool's own namespace only, granting
+`get`/`list`/`watch` on Deployments there -- least privilege, one grant per
+tool, rather than the portal holding read access to every namespace in the
+cluster.
 
 This per-tool fan-out runs sequentially and uncached today, which stops
 scaling gracefully well before the tool count gets large -- see

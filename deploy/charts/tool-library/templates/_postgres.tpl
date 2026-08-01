@@ -65,6 +65,8 @@ spec:
               command: ["pg_isready", "-U", {{ $user | quote }}]
             initialDelaySeconds: 5
             periodSeconds: 10
+          resources:
+            {{- toYaml (.Values.postgres.resources | default dict) | nindent 12 }}
       volumes:
         - name: data
           persistentVolumeClaim:
@@ -78,9 +80,7 @@ metadata:
     {{- include "tool-library.labels" . | nindent 4 }}
 spec:
   accessModes: ["ReadWriteOnce"]
-  {{- if .Values.postgres.storageClassName }}
   storageClassName: {{ .Values.postgres.storageClassName }}
-  {{- end }}
   resources:
     requests:
       storage: {{ .Values.postgres.storage | default "1Gi" }}
