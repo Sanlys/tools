@@ -18,6 +18,7 @@ Start here: **[`docs/architecture.md`](docs/architecture.md)**.
 | Give a tool a Postgres database | `docs/postgres.md` |
 | Wire up metrics/alerts/a dashboard | `docs/observability.md` |
 | Understand the CI/CD pipeline | `docs/ci-cd.md` |
+| Know where this scales/expands poorly | `docs/scaling-and-limitations.md` |
 
 ## Local development
 
