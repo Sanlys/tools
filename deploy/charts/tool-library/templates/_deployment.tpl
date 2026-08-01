@@ -27,8 +27,12 @@ spec:
         prometheus.io/path: "/metrics"
       {{- end }}
     spec:
-      {{- if .Values.dashboardRbac.enabled }}
-      serviceAccountName: {{ include "tool-library.fullname" . }}
+      {{- if .Values.serviceAccount.create }}
+      serviceAccountName: {{ .Values.serviceAccount.name | default (include "tool-library.fullname" .) }}
+      {{- end }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:
         - name: {{ include "tool-library.name" . }}

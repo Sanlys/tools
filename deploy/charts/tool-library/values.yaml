@@ -11,6 +11,15 @@ image:
   tag: "latest"
   pullPolicy: IfNotPresent
 
+# Only needed if the Harbor project a tool pulls from is private -- the
+# `library` project allows anonymous pull today (trilium-mcp in the
+# kubernetes repo pulls from it with no imagePullSecrets), so this is empty
+# by default. If a project ends up private, add a docker-registry Secret
+# (namespace-scoped, created out of band -- this platform has no sops setup
+# of its own) and reference it here.
+imagePullSecrets: []
+# - name: harbor-pull
+
 replicaCount: 1
 containerPort: 8080
 
@@ -21,18 +30,34 @@ env: []
 envFrom: []
 resources: {}
 
-# Only the portal sets this to true -- grants read-only cluster-wide access
-# to Deployments for the dashboard's k8s readiness check.
-dashboardRbac:
+# Creates a ServiceAccount for this app's pod. Most tools don't need this --
+# only set it when another tool needs to grant *this* tool's pod access to
+# something (currently: the portal, which other tools' `dashboardGrant`
+# below points at by name/namespace).
+serviceAccount:
+  create: false
+  name: ""
+
+# Set on an individual TOOL's values (not the portal's) to grant the
+# portal's ServiceAccount read-only access to Deployments in *this tool's
+# own namespace only* -- a namespaced Role/RoleBinding, not a ClusterRole.
+# subjectName/subjectNamespace must match the portal's actual
+# ServiceAccount (`serviceAccount.create: true` + its release namespace).
+dashboardGrant:
   enabled: false
+  subjectName: ""
+  subjectNamespace: ""
 
 ingress:
   enabled: true
+  # "internal" or "public" -- see the ingress section of the kubernetes
+  # repo's CLAUDE.md for which to pick. No default: must be set explicitly.
   className: ""
   host: ""
+  # e.g. {cert-manager.io/cluster-issuer: letsencrypt-internal}
   annotations: {}
   tls:
-    enabled: false
+    enabled: true
     secretName: ""
 
 bucket:
@@ -44,15 +69,20 @@ postgres:
   enabled: false
   image: postgres:16-alpine
   storage: 1Gi
-  storageClassName: ""
+  # No StorageClass in this cluster is marked default -- must be set
+  # explicitly (rook-ceph-block-ssd/-hdd) or the PVC stays Pending forever.
+  storageClassName: "rook-ceph-block-ssd"
   database: ""
+  resources: {}
 
 monitoring:
   enabled: false
   interval: 30s
   serviceMonitorLabels: {}
   prometheusRuleLabels: {}
-  grafanaInstanceSelector:
-    matchLabels: {}
+  # Namespace the dashboard ConfigMap is created in -- must match wherever
+  # Grafana's sidecar (kube-prometheus-stack) actually watches; this
+  # cluster's is "monitoring" (cluster/prod/platform/monitoring/grafana-dashboards).
+  dashboardNamespace: "monitoring"
   alerts:
     enabled: true

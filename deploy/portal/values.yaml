@@ -1,22 +1,32 @@
 # Values for the unified portal app. Unlike a regular tool, the portal
-# needs `dashboardRbac.enabled: true` (to read Deployment readiness
-# cluster-wide) and a `TOOLS_REGISTRY_JSON` env var listing every deployed
-# tool -- see docs/adding-a-tool.md: adding a tool means adding an entry
-# here (and a ToolPanel variant in apps/portal/frontend).
+# needs `serviceAccount.create: true` (so other tools' `dashboardGrant` has
+# something to point at for reading Deployment readiness) and a
+# `TOOLS_REGISTRY_JSON` env var listing every deployed tool -- see
+# docs/adding-a-tool.md: adding a tool means adding an entry here (and a
+# ToolPanel variant in apps/portal/frontend).
 
 nameOverride: "portal"
 fullnameOverride: ""
 
 image:
-  repository: harbor.example.internal/tools/portal-backend
+  repository: harbor.k8s.lysakermoen.com/tools/portal-backend
   tag: "latest"
   pullPolicy: IfNotPresent
+
+# See deploy/hello/values.yaml's comment -- not needed unless `tools`
+# ends up a private Harbor project.
+imagePullSecrets: []
 
 replicaCount: 1
 containerPort: 8080
 
 envFrom: []
-resources: {}
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 128Mi
 
 env:
   - name: TOOLS_REGISTRY_JSON
@@ -26,25 +36,33 @@ env:
           "id": "hello",
           "name": "Hello",
           "description": "Reference example tool (Postgres + S3 + websocket).",
-          "standalone_url": "https://hello.tools.example.com",
-          "api_base_url": "https://hello.tools.example.com",
+          "standalone_url": "https://hello.k8s.lysakermoen.com",
+          "api_base_url": "https://hello.k8s.lysakermoen.com",
           "health_path": "/health",
-          "k8s_namespace": "tools",
-          "k8s_deployment": "hello"
+          "k8s_namespace": "tools-hello",
+          "k8s_deployment": "tools-hello"
         }
       ]
 
-dashboardRbac:
-  enabled: true
+# Grants other tools' `dashboardGrant` something to bind to -- this
+# ServiceAccount itself carries no RBAC; each tool grants it read access to
+# its own namespace individually (least privilege, see
+# deploy/hello/values.yaml's dashboardGrant).
+serviceAccount:
+  create: true
+
+dashboardGrant:
+  enabled: false
 
 ingress:
   enabled: true
-  className: ""
-  host: tools.example.com
-  annotations: {}
+  className: internal
+  host: portal.k8s.lysakermoen.com
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-internal
   tls:
-    enabled: false
-    secretName: ""
+    enabled: true
+    secretName: portal-internal-tls
 
 bucket:
   enabled: false
@@ -57,8 +75,6 @@ monitoring:
   interval: 30s
   serviceMonitorLabels: {}
   prometheusRuleLabels: {}
-  grafanaInstanceSelector:
-    matchLabels:
-      dashboards: grafana
+  dashboardNamespace: "monitoring"
   alerts:
     enabled: true

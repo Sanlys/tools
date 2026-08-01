@@ -1,10 +1,11 @@
-# ArgoCD Application bootstrapping this chart. Plain manifest, not part of
-# the Helm chart itself -- see deploy/hello/application.yaml for why. Apply
-# once (by hand or from an app-of-apps root Application).
+# ArgoCD Application for this chart. Plain manifest, not part of the Helm
+# chart itself -- see deploy/hello/app.yaml for why. Auto-discovered by the
+# kubernetes repo's cluster/prod/apps/tools/app.yaml "tools root"
+# Application; not applied by hand.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: {{project-name}}
+  name: tools-{{project-name}}
   namespace: argocd
   finalizers:
     - resources-finalizer.argocd.argoproj.io
@@ -16,7 +17,7 @@ spec:
     path: deploy/{{project-name}}
   destination:
     server: https://kubernetes.default.svc
-    namespace: tools
+    namespace: tools-{{project-name}}
   syncPolicy:
     automated:
       prune: true

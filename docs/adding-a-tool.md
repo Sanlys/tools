@@ -25,7 +25,7 @@ cargo generate --path . templates/new-tool/deploy --name my-tool --destination d
 - `apps/my-tool/frontend` -- a `MyToolPanel` implementing
   `platform_core::Panel`, plus a `my-tool-standalone` native binary.
 - `deploy/my-tool` -- a Helm chart built on `deploy/charts/tool-library`,
-  and a plain `application.yaml` for ArgoCD.
+  and a plain `app.yaml` for ArgoCD.
 
 ## Manual steps (not automated, on purpose -- these touch shared files)
 
@@ -52,8 +52,12 @@ cargo generate --path . templates/new-tool/deploy --name my-tool --destination d
    `.github/workflows/release.yml` (image build+push+bump) --
    see `docs/ci-cd.md`.
 
-5. **Bootstrap ArgoCD** (once, out of band): `kubectl apply -f
-   deploy/my-tool/application.yaml`.
+Nothing needs bootstrapping in ArgoCD by hand: `deploy/my-tool/app.yaml`
+is auto-discovered via `cluster/prod/apps/tools/app.yaml` in the
+`kubernetes` repo (an app-of-apps "tools root" Application) the moment
+this commit lands on `main` -- see `docs/ci-cd.md`. No image-pull Secret
+is needed either, as long as the `tools` Harbor project allows anonymous
+pull (see `docs/ci-cd.md`).
 
 Steps 1-4 are exactly what `templates/new-tool/generate.sh` prints at the
 end, so you don't have to remember this list.
