@@ -10,7 +10,11 @@ WORKDIR /app
 RUN rustup target add wasm32-unknown-unknown \
     && cargo install trunk --locked
 COPY . .
-RUN trunk build --release apps/portal/frontend/index.html --dist /app/dist
+# Must run with cwd = the frontend crate's directory: trunk resolves the
+# target crate from cwd's Cargo.toml, and the workspace root's has no
+# `[package]` of its own. `--dist` needs an absolute path since it's
+# resolved relative to that cwd, not the repo root.
+RUN cd apps/portal/frontend && trunk build --release --dist /app/dist
 
 FROM rust:1-slim-bookworm AS backend-builder
 WORKDIR /app
