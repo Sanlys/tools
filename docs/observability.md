@@ -71,3 +71,7 @@ which `DashboardPanel` in the portal's egui UI polls every 10 seconds.
 This only needs the portal's own `dashboardRbac.enabled: true`
 (read-only, cluster-wide `get`/`list`/`watch` on Deployments) -- it doesn't
 talk to Prometheus at all.
+
+This per-tool fan-out runs sequentially and uncached today, which stops
+scaling gracefully well before the tool count gets large -- see
+`docs/scaling-and-limitations.md`.
