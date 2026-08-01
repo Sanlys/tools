@@ -47,9 +47,10 @@ platform-wide S3 credential anywhere.
 
 ## Local development
 
-There's no bucket outside the cluster. Either run against a local
-MinIO/localstack and export `BUCKET_HOST`/`BUCKET_PORT`/`BUCKET_NAME`/
-`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` yourself, or stub out the S3
-calls in your tool while developing -- `s3_adapter::S3Config::from_env()`
+There's no bucket outside the cluster. `docker-compose.yml` at the repo
+root runs a local MinIO with a `hello` bucket already created --
+`.env.example` has the matching `BUCKET_HOST`/`BUCKET_PORT`/`BUCKET_NAME`/
+`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`. See
+`docs/local-development.md`. `s3_adapter::S3Config::from_env()`
 will just return a clear "missing env var" error if they're unset, rather
 than hanging or connecting somewhere unexpected.

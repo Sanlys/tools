@@ -7,29 +7,43 @@
 //! Helm library chart (`deploy/charts/tool-library/templates/servicemonitor.yaml`)
 //! whenever a tool sets `monitoring.enabled: true` in its values -- see
 //! `docs/observability.md`.
+//!
+//! Deliberately built on `BaseMetricLayer` + `PrometheusBuilder::install_recorder()`
+//! rather than `PrometheusMetricLayer::pair()`: that convenience
+//! constructor's default `Handle` calls `PrometheusBuilder::build()`, which
+//! unconditionally tries to bind its *own* standalone HTTP listener
+//! (default `0.0.0.0:9000`) to serve metrics itself -- completely
+//! redundant with (and liable to collide with anything else on that port,
+//! discovered here by it colliding with a local MinIO on `:9000`) the
+//! `/metrics` route this module already exposes. `install_recorder()` only
+//! installs the global recorder, no listener.
 
 use axum::routing::get;
 use axum::Router;
-use axum_prometheus::PrometheusMetricLayer;
+use axum_prometheus::BaseMetricLayer;
+use metrics_exporter_prometheus::{BuildError, PrometheusBuilder};
 
 /// Returns a `tower` layer that records HTTP request metrics (latency,
 /// status codes, in-flight count) for every route it wraps, plus a small
 /// router exposing them at `/metrics` in Prometheus text format.
 ///
+/// Call once per process (it installs the global `metrics` recorder --
+/// calling it twice returns an error).
+///
 /// Typical use in a tool's backend:
 ///
 /// ```ignore
-/// let (metrics_layer, metrics_router) = metrics_adapter::metrics_layer();
+/// let (metrics_layer, metrics_router) = metrics_adapter::metrics_layer()?;
 /// let app = Router::new()
 ///     .route("/health", get(health))
 ///     .merge(metrics_router)
 ///     .layer(metrics_layer);
 /// ```
-pub fn metrics_layer<S>() -> (PrometheusMetricLayer<'static>, Router<S>)
+pub fn metrics_layer<S>() -> Result<(BaseMetricLayer<'static>, Router<S>), BuildError>
 where
     S: Clone + Send + Sync + 'static,
 {
-    let (layer, handle) = PrometheusMetricLayer::pair();
+    let handle = PrometheusBuilder::new().install_recorder()?;
     let router = Router::new().route(
         "/metrics",
         get(move || {
@@ -37,5 +51,5 @@ where
             async move { handle.render() }
         }),
     );
-    (layer, router)
+    Ok((BaseMetricLayer::new(), router))
 }

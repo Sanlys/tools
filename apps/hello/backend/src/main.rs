@@ -57,7 +57,7 @@ async fn main() -> anyhow::Result<()> {
         pg_pool,
     };
 
-    let (metrics_layer, metrics_router) = metrics_adapter::metrics_layer();
+    let (metrics_layer, metrics_router) = metrics_adapter::metrics_layer()?;
 
     let cors = CorsLayer::new()
         .allow_origin(Any)

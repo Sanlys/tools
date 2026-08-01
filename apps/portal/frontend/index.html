@@ -8,8 +8,12 @@
     <!-- trunk builds the crate, runs wasm-bindgen, and injects the loader
          script for us. It also triggers apps/portal/frontend/src/lib.rs's
          `#[wasm_bindgen(start)]` function once the module loads, which
-         mounts the app into the canvas below. -->
-    <link data-trunk rel="rust" />
+         mounts the app into the canvas below.
+
+         data-target-name picks the `[lib]` (cdylib) artifact -- this crate
+         also has a `[[bin]] portal-native` for local dev without a
+         browser, and trunk refuses to guess between the two. -->
+    <link data-trunk rel="rust" data-target-name="portal_frontend" />
     <base data-trunk-public-url />
 
     <style>

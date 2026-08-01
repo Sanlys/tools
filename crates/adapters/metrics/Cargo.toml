@@ -8,3 +8,4 @@ publish.workspace = true
 [dependencies]
 axum.workspace = true
 axum-prometheus = "0.7"
+metrics-exporter-prometheus = { version = "0.15", default-features = false }

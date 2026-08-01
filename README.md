@@ -12,6 +12,7 @@ Start here: **[`docs/architecture.md`](docs/architecture.md)**.
 | I want to... | See |
 |---|---|
 | Understand the overall design | `docs/architecture.md` |
+| Run things locally | `docs/local-development.md` |
 | Add a new tool | `docs/adding-a-tool.md` (or run `templates/new-tool/generate.sh <name>`) |
 | Give a tool an S3 bucket | `docs/s3-buckets.md` |
 | Give a tool a Postgres database | `docs/postgres.md` |
@@ -21,21 +22,15 @@ Start here: **[`docs/architecture.md`](docs/architecture.md)**.
 ## Local development
 
 ```sh
-# Backends
-cargo run -p hello-backend      # 0.0.0.0:8081, needs DATABASE_URL + S3 env vars (see docs/)
-cargo run -p portal-backend     # 0.0.0.0:8080
-
-# Portal UI (wasm, hot-reloading)
-cargo install trunk
-cd apps/portal/frontend && trunk serve    # http://localhost:1420, proxies /api,/config,/health to :8080
-
-# Any tool's standalone native UI
-cargo run -p hello-frontend --bin hello-standalone
-
-cargo check --workspace
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+docker compose up -d                          # local Postgres + MinIO stand-ins
+cp .env.example .env && set -a && source .env && set +a
+cargo run -p hello-backend                    # 0.0.0.0:8081
+cargo run -p portal-backend                   # 0.0.0.0:8080
+cd apps/portal/frontend && trunk serve        # http://localhost:1420
 ```
+
+Full walkthrough, standalone UIs, and the known rough edges:
+**[`docs/local-development.md`](docs/local-development.md)**.
 
 ## Repo layout
 

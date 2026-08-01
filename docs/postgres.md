@@ -40,5 +40,6 @@ parts -- either shape works.
 
 ## Local development
 
-Run a local Postgres (Docker, a system package, whatever) and export
-`DATABASE_URL` yourself, or the individual `POSTGRES_*` vars.
+`docker-compose.yml` at the repo root runs a local Postgres with a
+`hello`/`hello`/`hello` user/password/database -- `.env.example` has the
+matching `DATABASE_URL`. See `docs/local-development.md`.

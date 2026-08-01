@@ -53,7 +53,7 @@ async fn main() -> anyhow::Result<()> {
         k8s_client,
     };
 
-    let (metrics_layer, metrics_router) = metrics_adapter::metrics_layer();
+    let (metrics_layer, metrics_router) = metrics_adapter::metrics_layer()?;
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
