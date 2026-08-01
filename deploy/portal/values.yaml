@@ -7,19 +7,15 @@
 
 nameOverride: "portal"
 fullnameOverride: ""
-
 image:
   repository: harbor.k8s.lysakermoen.com/tools/portal-backend
-  tag: "latest"
+  tag: "ba31e81f0ce08d8c153052b62ad370e249062d2e"
   pullPolicy: IfNotPresent
-
 # See deploy/hello/values.yaml's comment -- not needed unless `tools`
 # ends up a private Harbor project.
 imagePullSecrets: []
-
 replicaCount: 1
 containerPort: 8080
-
 envFrom: []
 resources:
   requests:
@@ -27,7 +23,6 @@ resources:
     memory: 128Mi
   limits:
     memory: 128Mi
-
 env:
   - name: TOOLS_REGISTRY_JSON
     value: |
@@ -43,17 +38,14 @@ env:
           "k8s_deployment": "tools-hello"
         }
       ]
-
 # Grants other tools' `dashboardGrant` something to bind to -- this
 # ServiceAccount itself carries no RBAC; each tool grants it read access to
 # its own namespace individually (least privilege, see
 # deploy/hello/values.yaml's dashboardGrant).
 serviceAccount:
   create: true
-
 dashboardGrant:
   enabled: false
-
 ingress:
   enabled: true
   className: internal
@@ -63,13 +55,10 @@ ingress:
   tls:
     enabled: true
     secretName: portal-internal-tls
-
 bucket:
   enabled: false
-
 postgres:
   enabled: false
-
 monitoring:
   enabled: true
   interval: 30s
