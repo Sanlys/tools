@@ -1,0 +1,26 @@
+# ArgoCD Application for deploy/webhello -- see deploy/hello/app.yaml for
+# why this lives outside the chart and how it gets picked up (auto-discovered
+# via the kubernetes repo's cluster/prod/apps/tools/app.yaml "tools root"
+# Application, not applied by hand).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: tools-webhello
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: "https://github.com/Sanlys/tools.git"
+    targetRevision: main
+    path: deploy/webhello
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: tools-webhello
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

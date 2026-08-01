@@ -22,7 +22,7 @@ pub type PanelId = &'static str;
 ///
 /// Implement this on your tool's panel state, then add it as a variant to
 /// `apps/portal/frontend`'s `ToolPanel` enum. The same type is reused by a
-/// tool's standalone binary via [`standalone::run`].
+/// tool's standalone binary via [`standalone::run`]/[`standalone::run_web`].
 pub trait Panel {
     /// Stable id, e.g. `"hello"`. Must be unique across all registered tools.
     fn id(&self) -> PanelId;
@@ -43,17 +43,19 @@ pub trait Panel {
 
 /// Helpers for running a single [`Panel`] as its own standalone native/wasm
 /// binary, outside of the unified portal host. Every tool gets this for free
-/// by depending on `platform-core` and calling `standalone::run`.
+/// by depending on `platform-core` and calling `standalone::run` (native) or
+/// `standalone::run_web` (wasm, from a `#[wasm_bindgen(start)]` entry point
+/// -- see `apps/hello/frontend/src/lib.rs` for the reference wiring, along
+/// with its `index.html`/`Trunk.toml` and `apps/hello/backend`'s Dockerfile,
+/// which builds and serves that wasm bundle so the tool's own ingress host
+/// renders its panel directly instead of just exposing a bare API).
 pub mod standalone {
-    #[cfg(not(target_arch = "wasm32"))]
     use crate::Panel;
 
-    #[cfg(not(target_arch = "wasm32"))]
     struct StandaloneApp<P: Panel> {
         panel: P,
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     impl<P: Panel> eframe::App for StandaloneApp<P> {
         fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
             self.panel.tick(ctx);
@@ -64,8 +66,8 @@ pub mod standalone {
     }
 
     /// Run `panel` as a native standalone window. Call this from the tool's
-    /// own `src/bin/*.rs` (native only -- wasm entry points are wired up by
-    /// the portal, see `apps/portal/frontend/src/lib.rs`).
+    /// own `src/bin/*.rs` (native only -- for the wasm build, see
+    /// [`run_web`]).
     #[cfg(not(target_arch = "wasm32"))]
     pub fn run<P: Panel + 'static>(panel: P) -> eframe::Result<()> {
         let title = panel.title().to_string();
@@ -75,5 +77,35 @@ pub mod standalone {
             options,
             Box::new(|_cc| Ok(Box::new(StandaloneApp { panel }))),
         )
+    }
+
+    /// Mount `panel` into a `<canvas id="{canvas_id}">` element in the
+    /// hosting page, standalone (not embedded in the portal's unified wasm
+    /// bundle). Call this from a `#[wasm_bindgen(start)]` function in the
+    /// tool's own frontend crate -- panic-hook/tracing setup and the
+    /// `wasm_bindgen_futures::spawn_local` wrapper stay in that crate (same
+    /// as `apps/portal/frontend` does today) since they're one-time,
+    /// per-binary concerns, not something worth threading through here.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn run_web<P: Panel + 'static>(
+        canvas_id: &str,
+        panel: P,
+    ) -> Result<(), wasm_bindgen::JsValue> {
+        use wasm_bindgen::JsCast as _;
+
+        let canvas = web_sys::window()
+            .and_then(|w| w.document())
+            .and_then(|d| d.get_element_by_id(canvas_id))
+            .unwrap_or_else(|| panic!("index.html must contain a <canvas id=\"{canvas_id}\">"))
+            .dyn_into::<web_sys::HtmlCanvasElement>()
+            .unwrap_or_else(|_| panic!("#{canvas_id} must be a <canvas> element"));
+
+        eframe::WebRunner::new()
+            .start(
+                canvas,
+                eframe::WebOptions::default(),
+                Box::new(|_cc| Ok(Box::new(StandaloneApp { panel }))),
+            )
+            .await
     }
 }

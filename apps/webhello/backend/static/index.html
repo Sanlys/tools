@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Webhello</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      body {
+        margin: 0;
+        padding: 2rem;
+        min-height: 100vh;
+        box-sizing: border-box;
+        background: #1e1e1e;
+        color: #e6e6e6;
+        font: 16px/1.5 system-ui, sans-serif;
+      }
+      main {
+        max-width: 32rem;
+        margin: 0 auto;
+      }
+      input, button {
+        font: inherit;
+        padding: 0.4rem 0.6rem;
+      }
+      input {
+        background: #2a2a2a;
+        border: 1px solid #444;
+        color: inherit;
+        border-radius: 4px;
+      }
+      button {
+        background: #3a5;
+        border: none;
+        border-radius: 4px;
+        color: #fff;
+        cursor: pointer;
+      }
+      button:hover {
+        background: #4b6;
+      }
+      #error {
+        color: #f66;
+      }
+      ul {
+        padding-left: 1.2rem;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Webhello</h1>
+      <p>
+        Reference tool proving the "plain web frontend, no egui/wasm" path
+        works end to end -- see <code>apps/webhello/backend/src/main.rs</code>.
+      </p>
+      <hr />
+      <form id="greet-form">
+        <label>
+          Your name:
+          <input type="text" id="name-input" autocomplete="off" />
+        </label>
+        <button type="submit">Say hello</button>
+      </form>
+      <p id="error"></p>
+      <hr />
+      <p id="message">contacting backend...</p>
+      <ul id="greetings"></ul>
+    </main>
+
+    <script>
+      const errorEl = document.getElementById("error");
+      const messageEl = document.getElementById("message");
+      const greetingsEl = document.getElementById("greetings");
+      const formEl = document.getElementById("greet-form");
+      const nameInputEl = document.getElementById("name-input");
+
+      async function refreshStatus() {
+        errorEl.textContent = "";
+        try {
+          const res = await fetch("/api/status");
+          if (!res.ok) {
+            throw new Error(`${res.status} ${res.statusText}`);
+          }
+          const status = await res.json();
+          messageEl.textContent = status.message;
+          greetingsEl.innerHTML = "";
+          for (const name of status.greetings) {
+            const li = document.createElement("li");
+            li.textContent = name;
+            greetingsEl.appendChild(li);
+          }
+        } catch (err) {
+          errorEl.textContent = `backend error: ${err}`;
+        }
+      }
+
+      formEl.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const name = nameInputEl.value.trim();
+        if (!name) {
+          return;
+        }
+        errorEl.textContent = "";
+        try {
+          const res = await fetch("/api/greetings", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name }),
+          });
+          if (!res.ok) {
+            throw new Error(`${res.status} ${res.statusText}`);
+          }
+          nameInputEl.value = "";
+          await refreshStatus();
+        } catch (err) {
+          errorEl.textContent = `failed to post greeting: ${err}`;
+        }
+      });
+
+      refreshStatus();
+    </script>
+  </body>
+</html>

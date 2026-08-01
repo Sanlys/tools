@@ -16,7 +16,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 
 axum = { workspace = true, features = ["ws"] }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time", "signal"] }
-tower-http = { workspace = true, features = ["cors"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time", "signal", "fs"] }
+tower-http = { workspace = true, features = ["cors", "fs"] }
 sqlx.workspace = true
 aws-sdk-s3.workspace = true

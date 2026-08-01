@@ -3,7 +3,10 @@
 //! Generated from `templates/new-tool`. See `apps/hello/frontend` for a
 //! more fleshed-out reference (a text field that posts to the backend, a
 //! status fetch, etc). Talks to the backend purely over HTTP/websocket, so
-//! the exact same code runs natively and compiled to wasm in the portal.
+//! the exact same code runs natively and compiled to wasm in the portal --
+//! and, via `start()` at the bottom of this file plus this crate's
+//! `index.html`/`Trunk.toml`, standalone too (built and served by
+//! `apps/{{project-name}}/backend`'s Dockerfile, same as `apps/hello`'s).
 
 use platform_config::JsonResource;
 use platform_core::{Panel, PanelId};
@@ -70,4 +73,21 @@ impl Panel for {{project-name | pascal_case}}Panel {
             }
         }
     }
+}
+
+/// Mounts this tool standalone into the `<canvas id="the_canvas_id">` in
+/// this crate's `index.html`, talking to `{{project-name}}-backend` on the
+/// same origin that serves this bundle -- see `apps/hello/frontend/src/lib.rs`
+/// for the reference version of this same wiring.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen(start)]
+pub fn start() {
+    console_error_panic_hook::set_once();
+    tracing_wasm::set_as_global_default();
+
+    wasm_bindgen_futures::spawn_local(async {
+        platform_core::standalone::run_web("the_canvas_id", {{project-name | pascal_case}}Panel::new(""))
+            .await
+            .expect("failed to start eframe");
+    });
 }

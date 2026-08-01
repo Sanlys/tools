@@ -10,6 +10,7 @@ members = [
     "crates/adapters/metrics",
     "apps/hello/backend",
     "apps/hello/frontend",
+    "apps/webhello/backend",
     "apps/portal/backend",
     "apps/portal/frontend",
 ]

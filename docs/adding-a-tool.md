@@ -19,13 +19,25 @@ cargo generate --path . templates/new-tool/deploy --name my-tool --destination d
 ## What you get
 
 - `apps/my-tool/backend` -- an axum service with `/health`, `/api/status`,
-  a `/metrics` endpoint, and S3 + Postgres wired up (delete what you don't
+  a `/metrics` endpoint, S3 + Postgres wired up (delete what you don't
   need, and the matching `bucket`/`postgres` blocks in
-  `deploy/my-tool/values.yaml`).
+  `deploy/my-tool/values.yaml`), and a `trunk`-built wasm UI served as a
+  fallback for any path that isn't one of those API routes -- so this
+  tool's own ingress host renders its panel directly, not just a bare API.
 - `apps/my-tool/frontend` -- a `MyToolPanel` implementing
-  `platform_core::Panel`, plus a `my-tool-standalone` native binary.
+  `platform_core::Panel`, an `index.html`/`Trunk.toml` for the standalone
+  wasm build above, and a `my-tool-standalone` *native* binary (a separate,
+  desktop-only build -- see `docs/architecture.md`'s "Standalone tools").
 - `deploy/my-tool` -- a Helm chart built on `deploy/charts/tool-library`,
   and a plain `app.yaml` for ArgoCD.
+
+If egui doesn't fit and you'd rather ship a plain web frontend instead,
+skip the generator's `frontend` half and see `apps/webhello` -- a
+hand-written static HTML/JS page served straight from the backend, no
+`Panel` impl, no wasm. It only needs steps 1, 3, and 4 below (no
+`ToolPanel` to register), plus adding its id to `PortalApp::has_panel`'s
+`matches!` in `apps/portal/frontend/src/lib.rs` is *not* needed -- leaving
+an id out of that list is what makes it link-out-only in the first place.
 
 ## Manual steps (not automated, on purpose -- these touch shared files)
 

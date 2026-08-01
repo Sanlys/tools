@@ -8,6 +8,7 @@ publish.workspace = true
 [lib]
 name = "{{crate_name}}_frontend"
 path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
 
 [[bin]]
 name = "{{project-name}}-standalone"
@@ -20,3 +21,9 @@ serde.workspace = true
 serde_json.workspace = true
 egui.workspace = true
 ehttp.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+console_error_panic_hook = "0.1"
+tracing-wasm = "0.2"
