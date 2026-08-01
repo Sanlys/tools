@@ -1,0 +1,77 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: fmt
+        run: cargo fmt --all -- --check
+
+      - name: clippy (native)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: test
+        run: cargo test --workspace
+
+      - name: wasm build (portal, which pulls in every tool's frontend crate)
+        run: cargo build --target wasm32-unknown-unknown -p portal-frontend --lib
+
+  helm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+
+      - name: lint every app chart
+        run: |
+          set -euo pipefail
+          for chart in deploy/*/; do
+            [ -f "$chart/Chart.yaml" ] || continue
+            echo "::group::$chart"
+            helm dependency build "$chart"
+            helm lint "$chart"
+            helm template "$chart" > /dev/null
+            echo "::endgroup::"
+          done
+
+  docker:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: hello-backend
+            dockerfile: apps/hello/backend/Dockerfile
+          - name: portal-backend
+            dockerfile: apps/portal/backend/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: build (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: false
+          tags: ${{ matrix.name }}:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

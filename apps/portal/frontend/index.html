@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Tools Platform</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+
+    <!-- trunk builds the crate, runs wasm-bindgen, and injects the loader
+         script for us. It also triggers apps/portal/frontend/src/lib.rs's
+         `#[wasm_bindgen(start)]` function once the module loads, which
+         mounts the app into the canvas below. -->
+    <link data-trunk rel="rust" />
+    <base data-trunk-public-url />
+
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #1e1e1e;
+      }
+      canvas#the_canvas_id {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="the_canvas_id"></canvas>
+  </body>
+</html>

@@ -1,0 +1,11 @@
+[template]
+cargo_generate_version = ">=0.17.0"
+# This file contains literal Helm `{{ include ... }}` syntax that must
+# survive untouched -- only its path (`{{project-name}}`) gets substituted.
+exclude = ["templates/all.yaml"]
+
+[placeholders]
+description = { type = "string", prompt = "Short description of this tool", default = "A new internal tool" }
+container_port = { type = "string", prompt = "Backend container port (must match the one used for the app template)", default = "8090" }
+needs_bucket = { type = "bool", prompt = "Does this tool need an S3 bucket?", default = true }
+needs_postgres = { type = "bool", prompt = "Does this tool need Postgres?", default = true }

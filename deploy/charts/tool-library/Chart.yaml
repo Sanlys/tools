@@ -1,0 +1,10 @@
+apiVersion: v2
+name: tool-library
+description: >-
+  Shared Helm building blocks for internal-tools-platform apps: Deployment,
+  Service, Ingress, a rook-ceph S3 bucket claim, a single-pod Postgres, and
+  Prometheus/Grafana Operator resources. A library chart -- it renders
+  nothing on its own; per-app charts (deploy/hello, deploy/portal, ...) call
+  its templates. See docs/adding-a-tool.md.
+type: library
+version: 0.1.0

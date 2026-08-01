@@ -1,0 +1,23 @@
+[package]
+name = "portal-backend"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+api-types.workspace = true
+k8s-adapter.workspace = true
+metrics-adapter.workspace = true
+kube.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+axum.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time", "signal", "fs"] }
+tower-http = { workspace = true, features = ["cors", "fs"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }

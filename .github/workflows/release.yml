@@ -1,0 +1,84 @@
+name: release
+
+# Builds + pushes an image per app to the internal registry, then bumps
+# that app's `deploy/<app>/values.yaml` image tag and commits it back --
+# ArgoCD (GitOps, watching this repo) picks up the change and rolls it out.
+# See docs/ci-cd.md.
+#
+# Requires these repository secrets/variables to actually push anywhere:
+#   vars.REGISTRY_HOST      e.g. harbor.example.internal
+#   secrets.REGISTRY_USERNAME
+#   secrets.REGISTRY_PASSWORD
+# Until those are set, this workflow will fail at the login step -- that's
+# expected for a fresh clone of this scaffolding; see docs/ci-cd.md.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: hello
+            dockerfile: apps/hello/backend/Dockerfile
+            image: hello-backend
+          - name: portal
+            dockerfile: apps/portal/backend/Dockerfile
+            image: portal-backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: log in to registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ vars.REGISTRY_HOST }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: |
+            ${{ vars.REGISTRY_HOST }}/tools/${{ matrix.image }}:${{ github.sha }}
+            ${{ vars.REGISTRY_HOST }}/tools/${{ matrix.image }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: bump deploy/${{ matrix.name }}/values.yaml image tag
+        run: yq -i '.image.tag = "${{ github.sha }}"' "deploy/${{ matrix.name }}/values.yaml"
+
+      - name: commit the bump
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- "deploy/${{ matrix.name }}/values.yaml"; then
+            echo "no change, skipping commit"
+            exit 0
+          fi
+          git add "deploy/${{ matrix.name }}/values.yaml"
+          git commit -m "deploy(${{ matrix.name }}): bump image tag to ${{ github.sha }} [skip ci]"
+          git pull --rebase origin main
+          git push origin HEAD:main

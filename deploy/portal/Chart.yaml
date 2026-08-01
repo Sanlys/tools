@@ -1,0 +1,10 @@
+apiVersion: v2
+name: portal
+description: The unified Tools Platform web app -- egui/wasm UI, dashboard, and tool registry.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+dependencies:
+  - name: tool-library
+    version: 0.1.0
+    repository: "file://../charts/tool-library"

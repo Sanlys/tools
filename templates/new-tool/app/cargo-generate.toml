@@ -1,0 +1,6 @@
+[template]
+cargo_generate_version = ">=0.17.0"
+
+[placeholders]
+description = { type = "string", prompt = "Short description of this tool", default = "A new internal tool" }
+container_port = { type = "string", prompt = "Backend container port (must be unique across tools)", default = "8090" }
