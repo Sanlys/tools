@@ -2,6 +2,14 @@
 # why this lives outside the chart and how it gets picked up (auto-discovered
 # via the kubernetes repo's cluster/prod/apps/tools/app.yaml "tools root"
 # Application, not applied by hand).
+#
+# Deployed into hello's own namespace (tools-hello), not a separate one:
+# webhello shares hello's existing Postgres/S3 (see values.yaml's `envFrom`)
+# rather than provisioning its own -- it's still its own Deployment/process
+# (a second, independently-deployable frontend against the same app's
+# data), the same "tightly-coupled apps share a namespace" pattern the
+# `media` app (qbittorrent + the arr stack + jellyfin sharing one bucket)
+# already uses, per CLAUDE.md's namespace guidance.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -17,7 +25,7 @@ spec:
     path: deploy/webhello
   destination:
     server: https://kubernetes.default.svc
-    namespace: tools-webhello
+    namespace: tools-hello
   syncPolicy:
     automated:
       prune: true

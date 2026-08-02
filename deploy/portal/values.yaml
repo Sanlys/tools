@@ -49,11 +49,11 @@ env:
         {
           "id": "webhello",
           "name": "Webhello",
-          "description": "Reference tool with a plain static HTML/JS frontend instead of egui -- link-out only, no portal panel.",
+          "description": "Reference tool with a plain static HTML/JS frontend instead of egui -- link-out only, no portal panel. Shares hello's own Postgres/S3 (same namespace, same data) -- see deploy/webhello/values.yaml.",
           "standalone_url": "https://webhello.k8s.lysakermoen.com",
           "api_base_url": "https://webhello.k8s.lysakermoen.com",
           "health_path": "/health",
-          "k8s_namespace": "tools-webhello",
+          "k8s_namespace": "tools-hello",
           "k8s_deployment": "tools-webhello",
           "requires_role": null
         }

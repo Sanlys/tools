@@ -1,8 +1,17 @@
 # Values for the `webhello` example tool -- see apps/webhello/backend's
-# module doc for what it's demonstrating (a plain static HTML/JS frontend,
-# no egui/wasm). Copy deploy/hello/values.yaml's shape instead if your new
-# tool needs Postgres/S3/an egui panel; this one deliberately skips both to
-# keep the frontend-stack difference the point.
+# module doc for what it's demonstrating (a plain static HTML/JS frontend
+# instead of egui/wasm, still its own independently-deployable process --
+# but sharing *hello's own* Postgres `greetings` table and S3 bucket, not
+# provisioning its own. Both `bucket.enabled`/`postgres.enabled` below stay
+# `false` -- the `envFrom` block instead points straight at the Secrets/
+# ConfigMap `deploy/hello`'s chart already creates (`tools-hello-postgres`,
+# `tools-hello-bucket`), which only works because this Application deploys
+# into hello's own namespace (`tools-hello`, see app.yaml) rather than its
+# own. This means webhello's pod won't come up before hello's Postgres/
+# bucket exist -- acceptable here since the two are meant to be deployed
+# together as one family, not truly independent apps (see app.yaml's
+# comment); don't copy this cross-release `envFrom` pattern for a tool that
+# doesn't have that same relationship with another one.
 
 nameOverride: "webhello"
 fullnameOverride: ""
@@ -19,23 +28,32 @@ env:
   # This app's own sign-in state -- see deploy/idp/values.yaml's
   # IDP_CLIENTS_JSON "webhello" entry and apps/webhello/backend/src/main.rs's
   # doc comment (plain-JS PKCE flow, no auth_adapter frontend crate since
-  # this tool has no wasm at all).
+  # this tool has no wasm at all). Kept as its own separate IDP client even
+  # though the data below is shared with hello -- this is still its own
+  # process with its own audience-scoped tokens.
   - name: IDP_ISSUER_URL
     value: "https://idp.k8s.lysakermoen.com"
   - name: AUTH_CLIENT_ID
     value: "webhello"
-envFrom: []
+envFrom:
+  - configMapRef:
+      name: tools-hello-bucket
+  - secretRef:
+      name: tools-hello-bucket
+  - secretRef:
+      name: tools-hello-postgres
 resources:
   requests:
     cpu: 100m
-    memory: 64Mi
+    memory: 128Mi
   limits:
-    memory: 64Mi
+    memory: 128Mi
 serviceAccount:
   create: false
 # Lets the portal's dashboard read this Deployment's readiness -- a
-# namespace-scoped Role/RoleBinding in tools-webhello only, granted to the
-# portal's ServiceAccount (see deploy/portal/values.yaml).
+# namespace-scoped Role/RoleBinding (this release's own fullname, so it
+# doesn't collide with hello's own dashboardGrant in the same namespace),
+# granted to the portal's ServiceAccount (see deploy/portal/values.yaml).
 dashboardGrant:
   enabled: true
   subjectName: tools-portal
@@ -49,6 +67,7 @@ ingress:
   tls:
     enabled: true
     secretName: webhello-internal-tls
+# Not provisioning its own bucket/Postgres -- see the top comment.
 bucket:
   enabled: false
 postgres:
