@@ -4,13 +4,23 @@
     "name": "Tools Portal",
     "redirect_uris": ["http://localhost:8080/"],
     "roles": [],
-    "native": false
+    "native": false,
+    "access_restricted": false
   },
   {
     "client_id": "hello",
     "name": "Hello",
     "redirect_uris": ["http://localhost:8081/", "http://127.0.0.1:0/callback"],
     "roles": ["operator"],
-    "native": true
+    "native": true,
+    "access_restricted": false
+  },
+  {
+    "client_id": "webhello",
+    "name": "Webhello",
+    "redirect_uris": ["http://localhost:8082/"],
+    "roles": [],
+    "native": false,
+    "access_restricted": false
   }
 ]

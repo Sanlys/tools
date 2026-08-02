@@ -82,15 +82,14 @@ impl HelloPanel {
         #[cfg(target_arch = "wasm32")]
         let login = LoginWidget::new();
         #[cfg(not(target_arch = "wasm32"))]
-        let login = LoginWidget::new(
-            auth_adapter::frontend_native::fetch_auth_config(&api_base_url).unwrap_or_else(|err| {
-                eprintln!("hello-frontend: could not fetch auth config from {api_base_url}: {err}");
-                auth_adapter::AuthConfig {
-                    issuer_url: String::new(),
-                    client_id: String::new(),
-                }
-            }),
-        );
+        let login = match auth_adapter::frontend_native::fetch_auth_config(&api_base_url) {
+            Ok(cfg) => LoginWidget::new(cfg),
+            Err(err) => {
+                let msg = format!("could not fetch auth config from {api_base_url}: {err}");
+                eprintln!("hello-frontend: {msg}");
+                LoginWidget::with_config_error(msg)
+            }
+        };
 
         Self {
             status: JsonResource::new(),

@@ -28,6 +28,12 @@ pub enum ToolPanel {
     Home(HomePanel),
     Dashboard(DashboardPanel),
     Hello(hello_frontend::HelloPanel),
+    /// Wasm-only: this panel calls the IDP's own API directly using the
+    /// portal's bearer token (see `panels::idp`'s doc comment) -- the
+    /// native portal binary has no sign-in UI at all today, so there's
+    /// nothing for it to authenticate with.
+    #[cfg(target_arch = "wasm32")]
+    Idp(panels::IdpPanel),
 }
 
 /// Delegates a `Panel` method call to whichever variant is active. Kept as
@@ -40,6 +46,8 @@ macro_rules! dispatch {
             ToolPanel::Home($panel) => $body,
             ToolPanel::Dashboard($panel) => $body,
             ToolPanel::Hello($panel) => $body,
+            #[cfg(target_arch = "wasm32")]
+            ToolPanel::Idp($panel) => $body,
         }
     };
 }
@@ -108,6 +116,8 @@ impl PortalApp {
         let panel: Option<ToolPanel> = match id {
             "home" => Some(ToolPanel::Home(HomePanel::default())),
             "dashboard" => Some(ToolPanel::Dashboard(DashboardPanel::default())),
+            #[cfg(target_arch = "wasm32")]
+            "idp" => Some(ToolPanel::Idp(panels::IdpPanel::new())),
             _ => None,
         };
         if let Some(panel) = panel {
@@ -196,6 +206,10 @@ impl eframe::App for PortalApp {
                 if ui.button("Dashboard").clicked() {
                     self.open_builtin("dashboard");
                 }
+                #[cfg(target_arch = "wasm32")]
+                if ui.button("Account").clicked() {
+                    self.open_builtin("idp");
+                }
                 ui.separator();
                 ui.label("Tools:");
                 match self.registry.ready() {
@@ -248,6 +262,13 @@ impl eframe::App for PortalApp {
         for (id, open_panel) in self.open.iter_mut() {
             if !open_panel.visible {
                 continue;
+            }
+            #[cfg(target_arch = "wasm32")]
+            if let ToolPanel::Idp(idp) = &mut open_panel.panel {
+                idp.set_auth(
+                    self.login.bearer_token(),
+                    self.login.config().map(|c| c.issuer_url.clone()),
+                );
             }
             open_panel.panel.tick(ctx);
             let mut still_visible = true;

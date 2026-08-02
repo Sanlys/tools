@@ -35,7 +35,19 @@ impl<T: DeserializeOwned + Send + 'static> JsonResource<T> {
 
     /// Start (or restart) fetching `url`. Overwrites any in-flight request.
     pub fn fetch(&mut self, url: &str) {
-        let request = ehttp::Request::get(url);
+        self.fetch_with_headers(url, &[]);
+    }
+
+    /// Like [`fetch`](Self::fetch), but with extra request headers -- e.g. an
+    /// `Authorization: Bearer <token>` for a cross-origin authenticated GET
+    /// (see `apps/portal/frontend`'s IDP account panel, which calls another
+    /// origin's API using its own bearer token rather than a same-origin
+    /// runtime-config endpoint).
+    pub fn fetch_with_headers(&mut self, url: &str, headers: &[(&str, &str)]) {
+        let mut request = ehttp::Request::get(url);
+        if !headers.is_empty() {
+            request.headers = ehttp::Headers::new(headers);
+        }
         let (sender, promise) = poll_promise::Promise::new();
         ehttp::fetch(request, move |response| {
             let result = match response {

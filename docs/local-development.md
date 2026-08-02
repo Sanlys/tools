@@ -90,11 +90,14 @@ proxy, which is why `hello-backend`'s CORS is wide open.
 Native window:
 
 ```sh
-cargo run -p hello-frontend --bin hello-standalone
+HELLO_API_BASE_URL=http://localhost:8081 cargo run -p hello-frontend --bin hello-standalone
 ```
 
-Opens a native window, defaulting to `http://localhost:8081`
-(`HELLO_API_BASE_URL` overrides it).
+Opens a native window talking to your local `hello-backend`. The env var
+isn't optional for local dev: `hello-standalone` defaults to the real
+deployed `https://hello.k8s.lysakermoen.com` (what the shipped release
+binary should point at out of the box) rather than localhost, so skipping
+it here means you're not testing against what you just started in step 3.
 
 Standalone wasm build (what `hello.k8s.lysakermoen.com` actually serves in
 prod):
@@ -125,19 +128,24 @@ DATABASE_URL=postgres://idp:idp@localhost:5433/idp cargo run -p idp-backend   # 
 
 With no `IDP_CLIENTS_JSON`/`IDP_CLIENTS_FILE` set, it falls back to the
 bundled `apps/idp/backend/src/dev_clients.json`, which already declares
-`portal` and `hello` exactly as `deploy/idp/values.yaml` does in
-production, just pointed at `localhost`. Visit `http://localhost:4000` and
-register the first account (becomes admin automatically, no invite
-needed) -- needs a real WebAuthn-capable browser and a platform
-authenticator or security key; there's no password fallback.
+`portal`, `hello`, and `webhello` exactly as `deploy/idp/values.yaml` does
+in production, just pointed at `localhost` -- and, unlike production, with
+`access_restricted: false` so a fresh local account can sign into
+everything immediately (production defaults every client to
+`access_restricted: true`; see docs/architecture.md's "App login access"
+section). Visit `http://localhost:4000` and register the first account
+(becomes admin automatically, no invite needed) -- needs a real
+WebAuthn-capable browser and a platform authenticator or security key;
+there's no password fallback.
 
-With `idp-backend` running, start `hello-backend`/`portal-backend` and
-`trunk serve` as above; both default to `IDP_ISSUER_URL=http://localhost:4000`
-if unset, so the "Sign in" button in the portal's top bar and in the Hello
-panel should both work without any extra env vars. Grant yourself the
-`operator` role for `hello` from the IDP's `/admin` page to see the
-"Reset all greetings" button in the Hello panel go from disabled to
-enabled.
+With `idp-backend` running, start `hello-backend`/`portal-backend`/
+`webhello-backend` and `trunk serve` as above; all three default to
+`IDP_ISSUER_URL=http://localhost:4000` if unset, so the "Sign in" button in
+the portal's top bar, the Hello panel, and Webhello's page should all work
+without any extra env vars. Grant yourself the `operator` role for `hello`
+from the IDP's `/admin` page (or the portal's own "Account" panel, once
+signed into the portal) to see the "Reset all greetings" button in the
+Hello panel go from disabled to enabled.
 
 ## The usual checks
 

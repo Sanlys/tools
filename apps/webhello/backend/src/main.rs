@@ -10,11 +10,19 @@
 //! list (see `deploy/portal/values.yaml`'s `TOOLS_REGISTRY_JSON`), the same
 //! way `hello`'s standalone deployment does.
 //!
+//! Also the reference example of auth from a *plain JS* frontend (no
+//! `auth_adapter::frontend_web`, which is wasm-only): `static/index.html`
+//! hand-rolls the same redirect+PKCE dance `frontend_web.rs` does, scoped
+//! to its own `client_id` ("webhello", per `deploy/idp/values.yaml`).
+//! Posting a greeting requires being signed in (any authenticated user, no
+//! specific role) -- see `post_greeting` below.
+//!
 //! Deliberately skips Postgres/S3 (unlike `hello`, which exercises both) to
 //! keep the point of this example -- the frontend stack, not the backend
 //! adapters -- unobscured. State is an in-memory `Vec`, not persisted.
 
-use axum::extract::State;
+use auth_adapter::backend::{AuthState, AuthUser};
+use axum::extract::{FromRef, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
@@ -24,9 +32,16 @@ use std::sync::{Arc, Mutex};
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct AppState {
     greetings: Arc<Mutex<Vec<String>>>,
+    auth: AuthState,
+}
+
+impl FromRef<AppState> for AuthState {
+    fn from_ref(state: &AppState) -> Self {
+        state.auth.clone()
+    }
 }
 
 #[tokio::main]
@@ -35,7 +50,11 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
-    let state = AppState::default();
+    let auth = AuthState::from_env("webhello");
+    let state = AppState {
+        greetings: Arc::new(Mutex::new(Vec::new())),
+        auth: auth.clone(),
+    };
 
     let (metrics_layer, metrics_router) = metrics_adapter::metrics_layer()?;
     let cors = CorsLayer::new()
@@ -52,6 +71,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/status", get(get_status))
         .route("/api/greetings", post(post_greeting))
         .merge(metrics_router)
+        .merge(auth_adapter::backend::config_route(auth.public_config()))
         .layer(metrics_layer)
         .layer(cors)
         .with_state(state)
@@ -91,8 +111,13 @@ struct NewGreeting {
     name: String,
 }
 
+/// Requires being signed in (any authenticated `webhello` user, no specific
+/// role) -- see this module's doc comment. Unlike `hello`'s `reset_greetings`
+/// (which additionally requires the `operator` role), this only checks that
+/// `AuthUser` extracted at all: proof of login is the whole gate here.
 async fn post_greeting(
     State(state): State<AppState>,
+    _user: AuthUser,
     Json(body): Json<NewGreeting>,
 ) -> Result<StatusCode, ApiError> {
     let name = body.name.trim();

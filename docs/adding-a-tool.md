@@ -104,7 +104,20 @@ does:
    fetch vs. a synchronous `fetch_auth_config` call).
 4. **Env vars.** Add `IDP_ISSUER_URL`/`AUTH_CLIENT_ID` to the tool's
    `deploy/<tool>/values.yaml` (both default sensibly for local dev if
-   unset -- see `docs/local-development.md`).
+   unset -- see `docs/local-development.md`). New clients default to
+   `access_restricted: true` (opt-in by default -- a user needs an
+   explicit grant, from the IDP's `/admin` page or the portal's own
+   "Account" panel, just to log in at all, independent of any role
+   grants); set `false` explicitly if the tool should be open to every IDP
+   user.
+
+No egui/wasm? `apps/webhello` is the reference for a plain-JS frontend:
+its `static/index.html` hand-rolls the same redirect+PKCE dance
+`auth_adapter::frontend_web` does in Rust (same query params, same
+`sessionStorage`-backed state/verifier, same JWT-payload decode for
+`preferred_username`/`exp`), scoped to its own `client_id`. Backend-side
+it's identical either way -- `AuthUser` doesn't care what produced the
+bearer token.
 
 One thing *not* to do: don't expect the portal's own sign-in to gate your
 tool's panel. A token minted for the portal's `client_id` can't carry

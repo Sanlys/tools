@@ -25,13 +25,20 @@ pub struct ClientConfig {
     /// client's roles under. Defaults to "roles".
     #[serde(default = "default_roles_claim")]
     pub roles_claim: String,
-    /// See `db::Client::access_restricted`.
-    #[serde(default)]
+    /// See `db::Client::access_restricted`. Defaults to `true` (opt-in by
+    /// default, even for this repo's own built-in tools) -- set this to
+    /// `false` explicitly in `IDP_CLIENTS_JSON` for an app that should be
+    /// open to every IDP user with no per-user grant needed.
+    #[serde(default = "default_access_restricted")]
     pub access_restricted: bool,
 }
 
 fn default_roles_claim() -> String {
     "roles".to_string()
+}
+
+fn default_access_restricted() -> bool {
+    true
 }
 
 /// Reads `IDP_CLIENTS_JSON` (an inline JSON array, set by

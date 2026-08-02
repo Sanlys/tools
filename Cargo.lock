@@ -4293,9 +4293,12 @@ dependencies = [
  "console_error_panic_hook",
  "eframe",
  "egui",
+ "ehttp",
  "hello-frontend",
  "platform-config",
  "platform-core",
+ "serde",
+ "serde_json",
  "tracing",
  "tracing-subscriber",
  "tracing-wasm",
@@ -6573,6 +6576,7 @@ name = "webhello-backend"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "auth-adapter",
  "axum",
  "metrics-adapter",
  "serde",

@@ -4,8 +4,16 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
-    let api_base_url =
-        std::env::var("HELLO_API_BASE_URL").unwrap_or_else(|_| "http://localhost:8081".to_string());
+    // Defaults to the real deployed backend rather than a local dev address:
+    // this binary is what `release.yml` ships for people to actually run, and
+    // a silent-but-wrong default here used to be indistinguishable from a
+    // real bug -- the state shown never matched the portal's embedded panel
+    // (a different, unreachable backend), and the login button hung forever
+    // trying to complete an OAuth flow against an empty issuer_url derived
+    // from the failed config fetch. Override with HELLO_API_BASE_URL when
+    // actually developing against a local `hello-backend`.
+    let api_base_url = std::env::var("HELLO_API_BASE_URL")
+        .unwrap_or_else(|_| "https://hello.k8s.lysakermoen.com".to_string());
     if let Err(err) = platform_core::standalone::run(hello_frontend::HelloPanel::new(api_base_url))
     {
         eprintln!("hello-standalone exited with error: {err}");

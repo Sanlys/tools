@@ -68,6 +68,14 @@ impl LoginWidget {
         }
     }
 
+    /// The runtime auth config once known (after the first [`set_config`]
+    /// call) -- lets a host panel that already holds a `LoginWidget` (e.g.
+    /// the portal's own top-bar login) find the IDP's `issuer_url` to make
+    /// its own authenticated calls against, without a second fetch.
+    pub fn config(&self) -> Option<&AuthConfig> {
+        self.config.as_ref()
+    }
+
     /// Call once per frame (e.g. from `Panel::tick`). Finishes the
     /// redirect-back code exchange the first time it runs after a login
     /// redirect, and restores a previously-stored session on first load.
@@ -382,7 +390,7 @@ struct TokenResponse {
 
 thread_local! {
     static SESSION_RESULT: std::cell::RefCell<Option<Result<Session, String>>> =
-        std::cell::RefCell::new(None);
+        const { std::cell::RefCell::new(None) };
 }
 
 fn exchange_code(

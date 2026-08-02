@@ -154,14 +154,31 @@ Ported from the design proven out in `sanlys/manager`'s `idp/` (a
 from-scratch OIDC provider + WebAuthn passkey login), as its own app here:
 
 - **`apps/idp`** is a standalone tool like any other (own Postgres, own
-  Helm chart), *not* a portal panel -- WebAuthn ceremonies have to run on
-  the IDP's own origin anyway (RP ID/origin matching), so signing in,
-  managing passkeys/sessions, and admin (invites, per-app role grants) all
-  happen by visiting the IDP directly. Its frontend is plain static
-  HTML/CSS/vanilla JS (`apps/idp/frontend/static`), deliberately *not*
-  egui/wasm: any OAuth client redirecting a browser here -- including a
-  hypothetical one outside this whole Rust workspace -- gets a small, fast
-  login page regardless of what stack that client is built with.
+  Helm chart). Only the actual sign-in redirect -- an OAuth client
+  bouncing a browser through `/oauth/authorize` and the WebAuthn passkey
+  ceremony itself -- has to happen on the IDP's own origin (RP ID/origin
+  matching, plus `navigator.credentials.create/get` needing a real page to
+  call it from). That part's frontend is plain static HTML/CSS/vanilla JS
+  (`apps/idp/frontend/static`), deliberately *not* egui/wasm: any OAuth
+  client redirecting a browser here -- including a hypothetical one
+  outside this whole Rust workspace -- gets a small, fast login page
+  regardless of what stack that client is built with.
+- Everything *else* about managing an IDP account -- profile, passkeys,
+  sessions, and (for admins) users/invites/clients/role-grants/access-grants
+  -- lives in the portal's own egui "Account" panel
+  (`apps/portal/frontend/src/panels/idp.rs`), not only the IDP's static
+  `profile.html`/`admin.html` pages (which still exist and still work,
+  since the IDP has to serve them to non-portal clients anyway). This
+  works because proving *who's signed in* doesn't need a role scoped to
+  any particular client: `apps/idp/backend/src/routes/oauth.rs::require_session`
+  accepts *either* the IDP's own first-party session cookie (what
+  `static/*.html` uses) *or* a valid bearer token issued for *any*
+  client_id (what the portal's panel sends, using its own "portal" login)
+  -- a signed, unexpired token's `sub` is enough to resolve the user, and
+  `is_admin` is re-checked fresh from the database either way. Adding a
+  *new* passkey is the one action the Account panel can't do itself (still
+  needs the WebAuthn ceremony on the IDP's own origin) -- it links out to
+  `${issuer_url}/profile` for that one step.
 - No consent screen, and every client is a *public* client (PKCE only, no
   `client_secret` -- there is no such field anywhere in this IDP, for
   either kind of client below). Safe because every client here is
@@ -188,13 +205,14 @@ from-scratch OIDC provider + WebAuthn passkey login), as its own app here:
   client can override which JWT claim name that list is emitted under
   (`roles_claim`, defaults to `"roles"`) -- useful for an external relying
   party with its own claim-name expectations (see below).
-- A client can also be marked `access_restricted`: then a user needs an
-  *explicit* `user_app_access` grant just to complete login for that
-  client at all, independent of role grants (which are about what a
-  logged-in user can *do*, not whether they can log in in the first
-  place). `/oauth/authorize` returns `error=access_denied` for anyone
-  without that grant once it's set. Unrestricted (the default) means any
-  IDP user can log into that client, same behavior as before this existed.
+- Every client is `access_restricted` **by default** (opt-in, even for
+  this repo's own built-in tools): a user needs an *explicit*
+  `user_app_access` grant just to complete login for that client at all,
+  independent of role grants (which are about what a logged-in user can
+  *do*, not whether they can log in in the first place).
+  `/oauth/authorize` returns `error=access_denied` for anyone without that
+  grant. Set `access_restricted: false` explicitly for a client that
+  should stay open to every IDP user with no per-user grant needed.
 
 ### Registering an external OAuth app (e.g. ArgoCD)
 

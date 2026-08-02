@@ -14,8 +14,9 @@ use crate::{db, error::AppError, state::AppState};
 pub async fn list_users(
     State(app): State<AppState>,
     jar: PrivateCookieJar,
+    headers: axum::http::HeaderMap,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    require_admin(&app, &jar).await?;
+    require_admin(&app, &headers, &jar).await?;
     let users = db::list_users(&app.db).await?;
     let list: Vec<_> = users
         .iter()
@@ -27,9 +28,10 @@ pub async fn list_users(
 pub async fn delete_user(
     State(app): State<AppState>,
     jar: PrivateCookieJar,
+    headers: axum::http::HeaderMap,
     Path(user_id): Path<String>,
 ) -> Result<impl IntoResponse, AppError> {
-    let me = require_admin(&app, &jar).await?;
+    let me = require_admin(&app, &headers, &jar).await?;
     if me.id == user_id {
         return Err(AppError::BadRequest(
             "cannot delete your own account".into(),
@@ -64,8 +66,9 @@ fn client_json(c: &db::Client) -> serde_json::Value {
 pub async fn list_clients(
     State(app): State<AppState>,
     jar: PrivateCookieJar,
+    headers: axum::http::HeaderMap,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    require_admin(&app, &jar).await?;
+    require_admin(&app, &headers, &jar).await?;
     let clients = db::list_clients(&app.db).await?;
     let list: Vec<_> = clients.iter().map(client_json).collect();
     Ok(Json(serde_json::json!(list)))
@@ -82,12 +85,16 @@ pub struct ClientRequest {
     pub native: bool,
     #[serde(default = "default_roles_claim")]
     pub roles_claim: String,
-    #[serde(default)]
+    #[serde(default = "default_access_restricted")]
     pub access_restricted: bool,
 }
 
 fn default_roles_claim() -> String {
     "roles".to_string()
+}
+
+fn default_access_restricted() -> bool {
+    true
 }
 
 /// Claim names the token issuer already needs for itself -- rejected as a
@@ -133,9 +140,10 @@ fn validate_client_request(req: &ClientRequest) -> Result<(), AppError> {
 pub async fn create_client(
     State(app): State<AppState>,
     jar: PrivateCookieJar,
+    headers: axum::http::HeaderMap,
     Json(req): Json<ClientRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    require_admin(&app, &jar).await?;
+    require_admin(&app, &headers, &jar).await?;
     validate_client_request(&req)?;
     let input = db::ClientInput {
         name: req.name,
@@ -152,10 +160,11 @@ pub async fn create_client(
 pub async fn update_client(
     State(app): State<AppState>,
     jar: PrivateCookieJar,
+    headers: axum::http::HeaderMap,
     Path(client_id): Path<String>,
     Json(req): Json<ClientRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    require_admin(&app, &jar).await?;
+    require_admin(&app, &headers, &jar).await?;
     validate_client_request(&req)?;
     let input = db::ClientInput {
         name: req.name,
@@ -177,9 +186,10 @@ pub async fn update_client(
 pub async fn delete_client(
     State(app): State<AppState>,
     jar: PrivateCookieJar,
+    headers: axum::http::HeaderMap,
     Path(client_id): Path<String>,
 ) -> Result<impl IntoResponse, AppError> {
-    require_admin(&app, &jar).await?;
+    require_admin(&app, &headers, &jar).await?;
     if db::delete_client(&app.db, &client_id).await? {
         Ok(axum::http::StatusCode::NO_CONTENT)
     } else {
@@ -200,9 +210,10 @@ pub struct AccessGrantRequest {
 pub async fn grant_access(
     State(app): State<AppState>,
     jar: PrivateCookieJar,
+    headers: axum::http::HeaderMap,
     Json(req): Json<AccessGrantRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    require_admin(&app, &jar).await?;
+    require_admin(&app, &headers, &jar).await?;
     db::get_client(&app.db, &req.client_id)
         .await?
         .ok_or_else(|| AppError::NotFound("unknown client_id".into()))?;
@@ -219,9 +230,10 @@ pub struct AccessRevokeQuery {
 pub async fn revoke_access(
     State(app): State<AppState>,
     jar: PrivateCookieJar,
+    headers: axum::http::HeaderMap,
     Query(q): Query<AccessRevokeQuery>,
 ) -> Result<impl IntoResponse, AppError> {
-    require_admin(&app, &jar).await?;
+    require_admin(&app, &headers, &jar).await?;
     db::revoke_access(&app.db, &q.user_id, &q.client_id).await?;
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
@@ -229,9 +241,10 @@ pub async fn revoke_access(
 pub async fn list_access_for_user(
     State(app): State<AppState>,
     jar: PrivateCookieJar,
+    headers: axum::http::HeaderMap,
     Path(user_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    require_admin(&app, &jar).await?;
+    require_admin(&app, &headers, &jar).await?;
     let client_ids = db::list_access_for_user(&app.db, &user_id).await?;
     Ok(Json(serde_json::json!(client_ids)))
 }
@@ -248,9 +261,10 @@ pub struct RoleGrantRequest {
 pub async fn grant_role(
     State(app): State<AppState>,
     jar: PrivateCookieJar,
+    headers: axum::http::HeaderMap,
     Json(req): Json<RoleGrantRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    require_admin(&app, &jar).await?;
+    require_admin(&app, &headers, &jar).await?;
     let client = db::get_client(&app.db, &req.client_id)
         .await?
         .ok_or_else(|| AppError::NotFound("unknown client_id".into()))?;
@@ -274,9 +288,10 @@ pub struct RoleRevokeQuery {
 pub async fn revoke_role(
     State(app): State<AppState>,
     jar: PrivateCookieJar,
+    headers: axum::http::HeaderMap,
     Query(q): Query<RoleRevokeQuery>,
 ) -> Result<impl IntoResponse, AppError> {
-    require_admin(&app, &jar).await?;
+    require_admin(&app, &headers, &jar).await?;
     db::revoke_role(&app.db, &q.user_id, &q.client_id, &q.role).await?;
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
@@ -284,9 +299,10 @@ pub async fn revoke_role(
 pub async fn list_roles_for_user(
     State(app): State<AppState>,
     jar: PrivateCookieJar,
+    headers: axum::http::HeaderMap,
     Path(user_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    require_admin(&app, &jar).await?;
+    require_admin(&app, &headers, &jar).await?;
     let roles = db::list_roles_for_user(&app.db, &user_id).await?;
     Ok(Json(serde_json::json!(roles)))
 }
@@ -303,9 +319,10 @@ pub struct CreateInviteRequest {
 pub async fn create_invite(
     State(app): State<AppState>,
     jar: PrivateCookieJar,
+    headers: axum::http::HeaderMap,
     Json(req): Json<CreateInviteRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let me = require_admin(&app, &jar).await?;
+    let me = require_admin(&app, &headers, &jar).await?;
     let ttl = req.ttl_hours.unwrap_or(72).clamp(1, 720); // 1h-30d
     let invite = db::create_invite(&app.db, &me.id, req.note.as_deref(), ttl).await?;
     let invite_url = format!("{}/register?invite={}", app.base_url, invite.token);
@@ -318,8 +335,9 @@ pub async fn create_invite(
 pub async fn list_invites(
     State(app): State<AppState>,
     jar: PrivateCookieJar,
+    headers: axum::http::HeaderMap,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    require_admin(&app, &jar).await?;
+    require_admin(&app, &headers, &jar).await?;
     let invites = db::list_invites(&app.db).await?;
     let base = &app.base_url;
     let list: Vec<_> = invites
@@ -337,9 +355,10 @@ pub async fn list_invites(
 pub async fn delete_invite(
     State(app): State<AppState>,
     jar: PrivateCookieJar,
+    headers: axum::http::HeaderMap,
     Path(invite_id): Path<String>,
 ) -> Result<impl IntoResponse, AppError> {
-    require_admin(&app, &jar).await?;
+    require_admin(&app, &headers, &jar).await?;
     let deleted = db::delete_invite(&app.db, &invite_id).await?;
     if deleted {
         Ok(axum::http::StatusCode::NO_CONTENT)
