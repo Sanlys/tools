@@ -33,6 +33,8 @@ pub enum AuthError {
     Jwks(String),
     #[error("missing required role")]
     Forbidden,
+    #[error("checking cross-app access with the IDP: {0}")]
+    CrossAudience(String),
 }
 
 impl IntoResponse for AuthError {
@@ -162,8 +164,20 @@ impl AuthState {
             .ok_or(AuthError::UnknownKey)
     }
 
-    /// Verifies `token`'s signature, issuer, audience and expiry, returning
-    /// the decoded claims (including this app's own filtered `roles`).
+    /// Verifies `token`'s signature, issuer and expiry, returning the
+    /// decoded claims with `roles` filtered to this app's own client_id.
+    ///
+    /// Tries the fast, self-contained path first: a token minted for
+    /// *this app's own* client_id trusts its embedded `roles` claim
+    /// directly, no extra round trip. If the audience doesn't match --
+    /// e.g. a tool embedded in the portal reusing the *portal's* own
+    /// token to prove who's signed in, rather than running its own
+    /// separate OAuth flow (see `apps/portal/frontend`'s `HelloPanel`
+    /// wiring) -- the token still proves *who* the caller is (same
+    /// signature, same issuer), so fall back to asking the IDP fresh for
+    /// this app's own roles (and `access_restricted` gate) for that
+    /// subject via `/oauth/roles`, rather than trusting a roles claim
+    /// that was never scoped to this app in the first place.
     pub async fn verify(&self, token: &str) -> Result<Claims, AuthError> {
         let header = jsonwebtoken::decode_header(token).map_err(|_| AuthError::Malformed)?;
         let kid = header.kid.ok_or(AuthError::Malformed)?;
@@ -172,10 +186,75 @@ impl AuthState {
         let mut validation = Validation::new(Algorithm::RS256);
         validation.set_audience(&[&self.inner.client_id]);
         validation.set_issuer(&[&self.inner.issuer_url]);
-        let data = jsonwebtoken::decode::<Claims>(token, &key, &validation)
+        match jsonwebtoken::decode::<Claims>(token, &key, &validation) {
+            Ok(data) => return Ok(data.claims),
+            Err(e) if *e.kind() == jsonwebtoken::errors::ErrorKind::InvalidAudience => {}
+            Err(e) => return Err(AuthError::Invalid(e.to_string())),
+        }
+
+        let mut cross_audience_validation = Validation::new(Algorithm::RS256);
+        cross_audience_validation.validate_aud = false;
+        cross_audience_validation.set_issuer(&[&self.inner.issuer_url]);
+        let data = jsonwebtoken::decode::<Claims>(token, &key, &cross_audience_validation)
             .map_err(|e| AuthError::Invalid(e.to_string()))?;
-        Ok(data.claims)
+        let roles = self.fetch_cross_audience_roles(token).await?;
+        Ok(Claims {
+            aud: self.inner.client_id.clone(),
+            roles,
+            ..data.claims
+        })
     }
+
+    async fn fetch_cross_audience_roles(&self, token: &str) -> Result<Vec<String>, AuthError> {
+        let url = format!(
+            "{}/oauth/roles?client_id={}",
+            self.inner.issuer_url.trim_end_matches('/'),
+            urlencoding_encode(&self.inner.client_id),
+        );
+        let resp = self
+            .inner
+            .http
+            .get(&url)
+            .bearer_auth(token)
+            .send()
+            .await
+            .map_err(|e| AuthError::CrossAudience(e.to_string()))?;
+        if resp.status() == axum::http::StatusCode::FORBIDDEN {
+            return Err(AuthError::Forbidden);
+        }
+        if !resp.status().is_success() {
+            return Err(AuthError::CrossAudience(format!(
+                "roles lookup returned {}",
+                resp.status()
+            )));
+        }
+        let body: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| AuthError::CrossAudience(e.to_string()))?;
+        Ok(body
+            .get("roles")
+            .and_then(|r| r.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+}
+
+fn urlencoding_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for byte in s.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char)
+            }
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
 }
 
 /// The authenticated caller, extracted from a validated Bearer token. Add it

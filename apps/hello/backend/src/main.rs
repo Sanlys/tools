@@ -119,7 +119,14 @@ struct StatusResponse {
     bucket_object_count: u64,
 }
 
-async fn get_status(State(state): State<AppState>) -> Result<Json<StatusResponse>, ApiError> {
+/// Requires being signed in -- the greeting count and bucket object count
+/// below used to be visible to anyone, logged in or not. `AuthUser` here
+/// only proves login, no specific role (contrast `reset_greetings`, which
+/// additionally requires `operator`).
+async fn get_status(
+    State(state): State<AppState>,
+    _user: AuthUser,
+) -> Result<Json<StatusResponse>, ApiError> {
     let greeting_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM greetings")
         .fetch_one(&state.pg_pool)
         .await?;

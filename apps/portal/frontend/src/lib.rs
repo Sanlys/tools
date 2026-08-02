@@ -267,11 +267,17 @@ impl eframe::App for PortalApp {
                 continue;
             }
             #[cfg(target_arch = "wasm32")]
-            if let ToolPanel::Idp(idp) = &mut open_panel.panel {
-                idp.set_auth(
-                    self.login.bearer_token(),
-                    self.login.config().map(|c| c.issuer_url.clone()),
-                );
+            match &mut open_panel.panel {
+                ToolPanel::Idp(idp) => {
+                    idp.set_auth(
+                        self.login.bearer_token(),
+                        self.login.config().map(|c| c.issuer_url.clone()),
+                    );
+                }
+                ToolPanel::Hello(hello) => {
+                    hello.set_portal_token(self.login.bearer_token());
+                }
+                _ => {}
             }
             open_panel.panel.tick(ctx);
             let mut still_visible = true;

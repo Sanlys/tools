@@ -92,22 +92,38 @@ does:
    `auth_adapter::backend::config_route(auth.public_config())` into your
    router, and take `user: AuthUser` as a handler parameter + call
    `user.require_role("...")?` in any route you want gated. See
-   `apps/hello/backend`'s `reset_greetings` handler.
-3. **Frontend.** Add `auth-adapter.workspace = true`. Add a
-   `#[cfg(target_arch = "wasm32")] use auth_adapter::frontend_web::LoginWidget;`
-   / `#[cfg(not(target_arch = "wasm32"))] use
-   auth_adapter::frontend_native::LoginWidget;` pair, a `login: LoginWidget`
-   field, call `login.tick(ctx)` every frame, and gate whatever needs it
-   behind `login.has_role("...")`. For drawing the widget itself: your
-   panel is hosted two different ways (embedded in the portal, and
-   standalone -- see `docs/architecture.md`'s "Standalone tools" section),
-   and only one of those already shows the signed-in user elsewhere on the
-   page. Take an `embedded: bool` constructor param (`true` only when the
-   portal is the one constructing your panel) and call `login.ui(ui)` when
-   `!embedded`, `login.ui_compact(ui)` (wasm-only -- no avatar, just a
-   plain "Sign in"/"Sign out") when `embedded`. See `apps/hello/frontend`'s
-   `HelloPanel` for the full pattern, including the wasm-vs-native config
-   wiring (`JsonResource` fetch vs. a synchronous `fetch_auth_config` call).
+   `apps/hello/backend`'s `reset_greetings` handler. Nothing here needs to
+   change to support a panel embedded in the portal: `AuthUser`'s
+   extraction transparently accepts either a token minted for your own
+   `client_id` (the common case) or one minted for a different client_id
+   (the portal's own, reused by your embedded panel), falling back to a
+   live per-request roles lookup against the IDP only for the latter --
+   see `docs/architecture.md`'s audience-scoping note.
+3. **Frontend.** Add `auth-adapter.workspace = true` and take an
+   `embedded: bool` constructor param (`true` only when the portal itself
+   is the one constructing your panel -- see `docs/architecture.md`'s
+   audience-scoping note on why embedded vs. standalone need genuinely
+   different login handling, not just a different button style):
+   - **Standalone** (`!embedded`: native, or your tool's own wasm bundle):
+     add a `#[cfg(target_arch = "wasm32")] use
+     auth_adapter::frontend_web::LoginWidget;` / `#[cfg(not(target_arch =
+     "wasm32"))] use auth_adapter::frontend_native::LoginWidget;` pair, a
+     `login: LoginWidget` field, call `login.tick(ctx)` every frame and
+     `login.ui(ui)` to draw it, and use `login.bearer_token()` /
+     `login.has_role("...")` for your own API calls/gating.
+   - **Embedded** (`embedded: true`): don't construct or tick a
+     `LoginWidget` at all -- there's no working OAuth flow to run from
+     inside the portal's page (see the architecture doc). Instead, add a
+     `set_portal_token(&mut self, token: Option<String>)` method the
+     portal calls once per frame with its own bearer token (see
+     `apps/portal/frontend/src/lib.rs`'s `PortalApp::update`, which
+     special-cases each embeddable `ToolPanel` variant), store it, and use
+     *that* token for your API calls instead. Draw no login UI at all in
+     this case -- the portal's own top bar already shows who's signed in.
+   
+   See `apps/hello/frontend`'s `HelloPanel` for the full pattern (a
+   `bearer_token()`/`is_authenticated()` helper method that branches on
+   `embedded` keeps the rest of the panel's code the same either way).
 4. **Env vars.** Add `IDP_ISSUER_URL`/`AUTH_CLIENT_ID` to the tool's
    `deploy/<tool>/values.yaml` (both default sensibly for local dev if
    unset -- see `docs/local-development.md`). New clients default to

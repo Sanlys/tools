@@ -240,13 +240,31 @@ access" section of `/admin`. Everyone else gets `access_denied` at
   storage on native via `frontend_native`) for frontends. See
   `apps/hello`'s wiring for the copy-paste pattern, and
   `docs/adding-a-tool.md`'s auth section.
-- One important consequence of standard OIDC audience scoping: a token
-  minted for one client_id can't carry roles for a different client_id.
-  So a tool's own panel -- even when it's opened *inside* the portal --
-  manages its own login independently, scoped to its own `client_id`, not
-  the portal's. The portal's own top-bar sign-in only gates portal-native
-  features (there are none yet); it can't gate other tools' panels, and
-  doesn't try to. Silent SSO (`prompt=none`) is what keeps this from
-  meaning repeated passkey prompts: once the IDP has a session cookie
-  (from any prior login), each tool's own silent attempt picks it up with
-  at most a brief invisible redirect, not a new ceremony.
+- Standard OIDC audience scoping means a token minted for one client_id
+  can't carry roles for a different one -- but a *standalone* tool
+  (native, or its own subdomain's wasm build) and a tool's panel *embedded
+  in the portal* need different answers to that:
+  - **Standalone**, a tool runs its own full OAuth dance, scoped to its
+    own `client_id`, exactly like before. This is also the only option
+    that can actually work here: a redirect always lands back on whatever
+    page initiated it, and for an embedded panel that's the *portal's*
+    origin -- which was never declared as one of the tool's own
+    `redirect_uris`, so the IDP would reject it
+    (`redirect_uri not allowed for this client`). Silent SSO (`prompt=none`)
+    still helps standalone tools avoid a second passkey prompt once the
+    IDP already has a session cookie from signing into the portal (or any
+    other tool) first.
+  - **Embedded in the portal**, a tool's panel doesn't run its own OAuth
+    flow at all -- it reuses the *portal's own* bearer token purely as
+    proof of *who's* signed in (see `apps/portal/frontend/src/lib.rs`'s
+    `set_portal_token` call into `HelloPanel`, the reference wiring). The
+    tool's own backend independently asks the IDP fresh, per request, for
+    *its own* roles for that subject (`GET /oauth/roles?client_id=...`)
+    rather than trusting the token's embedded `roles` claim, which was
+    scoped to the portal's client_id, not the tool's --
+    `crates/adapters/auth::backend::AuthState::verify` tries the normal
+    same-audience path first (fast, self-contained, no extra request) and
+    only falls back to this cross-audience lookup when the audience
+    doesn't match. Net effect: sign into the portal once, and every
+    embedded panel already works -- matching how the portal's own
+    "Account" panel already behaved (see the next section).

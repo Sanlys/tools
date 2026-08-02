@@ -25,14 +25,27 @@
 //! this compiled bundle itself.
 //!
 //! This is also the reference implementation of "a tool with an auth-gated
-//! action": it carries its own [`auth_adapter`] `LoginWidget`, scoped to
-//! *this app's own* `client_id` ("hello", per `deploy/idp/values.yaml`) --
-//! not the portal's. That's deliberate: a token minted for the portal's own
-//! client_id can't carry roles for a different app's client_id (standard
-//! OIDC audience scoping), so any tool that wants to check "does this user
-//! have role X *for me*" needs its own login/token, even when it's opened
-//! as a panel inside the portal. See `docs/adding-a-tool.md`'s auth
-//! section for the copy-paste version of this pattern.
+//! action" -- but the *login* story now differs by hosting context:
+//!
+//! - **Standalone** (native, or this tool's own wasm bundle): carries its
+//!   own [`auth_adapter`] `LoginWidget`, scoped to *this app's own*
+//!   `client_id` ("hello", per `deploy/idp/values.yaml`), and runs its own
+//!   full OAuth dance -- there's no other page to borrow a session from.
+//! - **Embedded in the portal** (`embedded: true`): does *not* run its own
+//!   OAuth flow at all. A separate flow can't work here anyway -- the
+//!   redirect always lands back on whatever page initiated it (the
+//!   portal's own origin, since that's the page the browser is actually
+//!   on), which was never declared as one of `hello`'s own
+//!   `redirect_uris`, so the IDP rejects it (`redirect_uri not allowed for
+//!   this client`). Instead this panel reuses the *portal's own* bearer
+//!   token (see `PortalApp::update`'s `set_portal_token` call) purely as
+//!   proof of *who's* signed in; `apps/hello/backend` independently asks
+//!   the IDP fresh for this app's own roles for that subject rather than
+//!   trusting a roles claim that was scoped to the portal's client_id, not
+//!   hello's (see `crates/adapters/auth::backend::AuthState::verify`'s
+//!   cross-audience fallback). Net effect: signing into the portal once is
+//!   enough for every embedded panel, matching the portal's own top bar
+//!   ("you're already signed in, this shouldn't ask again").
 
 use platform_config::JsonResource;
 use platform_core::{Panel, PanelId};
@@ -65,16 +78,17 @@ struct NewGreeting<'a> {
 
 pub struct HelloPanel {
     api_base_url: String,
-    /// `true` when hosted as a panel inside the portal, which already shows
-    /// the signed-in user elsewhere on the page -- suppresses this panel's
-    /// own avatar so it isn't duplicated per panel (`false` for both native
-    /// and standalone-wasm builds, where this is the only sign-in indicator
-    /// on the page at all). See `LoginWidget::ui_compact`'s doc comment.
-    /// Only consulted on wasm -- native has no `ui_compact` (there's no
-    /// portal top bar to defer to in a native standalone window either
-    /// way).
+    /// `true` when hosted as a panel inside the portal -- see this module's
+    /// doc comment. `false` for both native and standalone-wasm builds,
+    /// which run their own separate login and have no portal token to
+    /// borrow in the first place.
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     embedded: bool,
+    /// Set once per frame by the portal via `set_portal_token` when
+    /// `embedded` -- `None` until the portal itself is signed in. Unused
+    /// (and never set) when `!embedded`.
+    #[cfg(target_arch = "wasm32")]
+    portal_token: Option<String>,
     status: JsonResource<HelloStatus>,
     name_input: String,
     last_error: Option<String>,
@@ -107,6 +121,8 @@ impl HelloPanel {
 
         Self {
             embedded,
+            #[cfg(target_arch = "wasm32")]
+            portal_token: None,
             status: JsonResource::new(),
             name_input: String::new(),
             last_error: None,
@@ -119,8 +135,49 @@ impl HelloPanel {
         }
     }
 
+    /// Called once per frame by the portal (only when `embedded`) with its
+    /// own bearer token -- see this module's doc comment. A no-op if this
+    /// panel isn't `embedded`, or (impossible in practice, but harmless) if
+    /// called on a native build.
+    #[cfg(target_arch = "wasm32")]
+    pub fn set_portal_token(&mut self, token: Option<String>) {
+        if self.embedded {
+            self.portal_token = token;
+        }
+    }
+
+    /// The token to authenticate this panel's own API calls with: the
+    /// portal's own token when embedded, otherwise this panel's own
+    /// separately-authenticated `LoginWidget` session.
+    fn bearer_token(&self) -> Option<String> {
+        #[cfg(target_arch = "wasm32")]
+        {
+            if self.embedded {
+                return self.portal_token.clone();
+            }
+        }
+        self.login.bearer_token()
+    }
+
+    fn is_authenticated(&self) -> bool {
+        self.bearer_token().is_some()
+    }
+
     fn status_url(&self) -> String {
         format!("{}/api/status", self.api_base_url.trim_end_matches('/'))
+    }
+
+    /// Requires being signed in -- `apps/hello/backend`'s `get_status` now
+    /// takes an `AuthUser` param, so the greeting count / bucket object
+    /// count it returns are no longer visible to a logged-out caller
+    /// either.
+    fn fetch_status(&mut self) {
+        let Some(token) = self.bearer_token() else {
+            return;
+        };
+        let auth = format!("Bearer {token}");
+        self.status
+            .fetch_with_headers(&self.status_url(), &[("Authorization", &auth)]);
     }
 
     /// Requires being signed in -- `apps/hello/backend`'s `post_greeting`
@@ -132,7 +189,7 @@ impl HelloPanel {
         if self.name_input.trim().is_empty() {
             return;
         }
-        let Some(token) = self.login.bearer_token() else {
+        let Some(token) = self.bearer_token() else {
             return;
         };
         let url = format!("{}/api/greetings", self.api_base_url.trim_end_matches('/'));
@@ -161,8 +218,17 @@ impl HelloPanel {
         self.status = JsonResource::new();
     }
 
+    /// Requires the `operator` role. When embedded, this panel has no
+    /// reliable client-side way to know in advance whether the portal's
+    /// session holds that role *for hello specifically* (that's the whole
+    /// point of the cross-audience check happening server-side -- see this
+    /// module's doc comment), so the button is shown whenever signed in at
+    /// all; a missing role surfaces as a 403 from the backend rather than
+    /// being predicted client-side (fire-and-forget like `post_greeting`
+    /// above -- the next status refresh is the only visible feedback
+    /// either way).
     fn reset_greetings(&mut self) {
-        let Some(token) = self.login.bearer_token() else {
+        let Some(token) = self.bearer_token() else {
             return;
         };
         let url = format!(
@@ -187,12 +253,12 @@ impl Panel for HelloPanel {
     }
 
     fn tick(&mut self, ctx: &egui::Context) {
-        if !self.status.has_requested() {
-            self.status.fetch(&self.status_url());
+        if self.is_authenticated() && !self.status.has_requested() {
+            self.fetch_status();
         }
 
         #[cfg(target_arch = "wasm32")]
-        {
+        if !self.embedded {
             if !self.auth_config.has_requested() {
                 self.auth_config.fetch(&format!(
                     "{}/config/auth.json",
@@ -204,29 +270,35 @@ impl Panel for HelloPanel {
             }
         }
 
-        self.login.tick(ctx);
-
-        // First frame after we have a session (or know we don't): try a
-        // silent SSO once. If the user already signed in anywhere against
-        // this IDP, this picks that session up with no visible passkey
-        // prompt; if not, it's a no-op that just leaves the "Sign in"
-        // button showing (see `LoginWidget::attempt_silent_sso`'s
-        // doc-comment on the one-redirect-flash cost this trades off).
         #[cfg(target_arch = "wasm32")]
-        if !self.tried_silent_sso && !self.login.is_authenticated() {
-            self.tried_silent_sso = true;
-            self.login.attempt_silent_sso();
+        if !self.embedded {
+            self.login.tick(ctx);
+
+            // First frame after we have a session (or know we don't): try a
+            // silent SSO once. If the user already signed in anywhere against
+            // this IDP, this picks that session up with no visible passkey
+            // prompt; if not, it's a no-op that just leaves the "Sign in"
+            // button showing (see `LoginWidget::attempt_silent_sso`'s
+            // doc-comment on the one-redirect-flash cost this trades off).
+            if !self.tried_silent_sso && !self.login.is_authenticated() {
+                self.tried_silent_sso = true;
+                self.login.attempt_silent_sso();
+            }
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        self.login.tick(ctx);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.heading("Hello");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // Embedded: no separate login UI at all -- the portal's own
+                // top bar already covers "who's signed in" (see this
+                // module's doc comment on why hello can't run its own OAuth
+                // flow from inside the portal anyway).
                 #[cfg(target_arch = "wasm32")]
-                if self.embedded {
-                    self.login.ui_compact(ui);
-                } else {
+                if !self.embedded {
                     self.login.ui(ui);
                 }
                 #[cfg(not(target_arch = "wasm32"))]
@@ -239,7 +311,7 @@ impl Panel for HelloPanel {
         );
         ui.separator();
 
-        if self.login.is_authenticated() {
+        if self.is_authenticated() {
             ui.horizontal(|ui| {
                 ui.label("Your name:");
                 ui.text_edit_singleline(&mut self.name_input);
@@ -262,36 +334,46 @@ impl Panel for HelloPanel {
 
         ui.separator();
 
-        match self.status.ready() {
-            None => {
-                ui.spinner();
-                ui.label("contacting backend...");
-            }
-            Some(Ok(status)) => {
-                ui.label(&status.message);
-                ui.label(format!(
-                    "greetings recorded in Postgres: {}",
-                    status.greeting_count
-                ));
-                ui.label(format!(
-                    "objects in this tool's S3 bucket: {}",
-                    status.bucket_object_count
-                ));
-                if ui.button("Refresh").clicked() {
-                    self.status = JsonResource::new();
+        if !self.is_authenticated() {
+            ui.label(egui::RichText::new("Sign in above to view this tool's status.").weak());
+        } else {
+            match self.status.ready() {
+                None => {
+                    ui.spinner();
+                    ui.label("contacting backend...");
                 }
-            }
-            Some(Err(err)) => {
-                ui.colored_label(egui::Color32::RED, format!("backend error: {err}"));
+                Some(Ok(status)) => {
+                    ui.label(&status.message);
+                    ui.label(format!(
+                        "greetings recorded in Postgres: {}",
+                        status.greeting_count
+                    ));
+                    ui.label(format!(
+                        "objects in this tool's S3 bucket: {}",
+                        status.bucket_object_count
+                    ));
+                    if ui.button("Refresh").clicked() {
+                        self.status = JsonResource::new();
+                    }
+                }
+                Some(Err(err)) => {
+                    ui.colored_label(egui::Color32::RED, format!("backend error: {err}"));
+                }
             }
         }
 
         ui.separator();
         ui.label(egui::RichText::new("Operator actions").strong());
-        if self.login.has_role(OPERATOR_ROLE) {
+        if self.is_authenticated() {
             if ui.button("Reset all greetings").clicked() {
                 self.reset_greetings();
             }
+            ui.label(
+                egui::RichText::new(format!(
+                    "requires the `{OPERATOR_ROLE}` role -- the backend rejects this if you don't have it"
+                ))
+                .weak(),
+            );
         } else {
             ui.label(
                 egui::RichText::new(format!(
