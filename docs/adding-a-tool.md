@@ -97,11 +97,17 @@ does:
    `#[cfg(target_arch = "wasm32")] use auth_adapter::frontend_web::LoginWidget;`
    / `#[cfg(not(target_arch = "wasm32"))] use
    auth_adapter::frontend_native::LoginWidget;` pair, a `login: LoginWidget`
-   field, call `login.tick(ctx)` every frame and `login.ui(ui)` wherever you
-   want the sign-in button/avatar drawn, and gate whatever needs it behind
-   `login.has_role("...")`. See `apps/hello/frontend`'s `HelloPanel` for the
-   full pattern, including the wasm-vs-native config wiring (`JsonResource`
-   fetch vs. a synchronous `fetch_auth_config` call).
+   field, call `login.tick(ctx)` every frame, and gate whatever needs it
+   behind `login.has_role("...")`. For drawing the widget itself: your
+   panel is hosted two different ways (embedded in the portal, and
+   standalone -- see `docs/architecture.md`'s "Standalone tools" section),
+   and only one of those already shows the signed-in user elsewhere on the
+   page. Take an `embedded: bool` constructor param (`true` only when the
+   portal is the one constructing your panel) and call `login.ui(ui)` when
+   `!embedded`, `login.ui_compact(ui)` (wasm-only -- no avatar, just a
+   plain "Sign in"/"Sign out") when `embedded`. See `apps/hello/frontend`'s
+   `HelloPanel` for the full pattern, including the wasm-vs-native config
+   wiring (`JsonResource` fetch vs. a synchronous `fetch_auth_config` call).
 4. **Env vars.** Add `IDP_ISSUER_URL`/`AUTH_CLIENT_ID` to the tool's
    `deploy/<tool>/values.yaml` (both default sensibly for local dev if
    unset -- see `docs/local-development.md`). New clients default to

@@ -145,8 +145,14 @@ struct NewGreeting {
     name: String,
 }
 
+/// Requires being signed in (any authenticated `hello` user, no specific
+/// role -- contrast `reset_greetings` below, which additionally requires
+/// the `operator` role). Posting used to have no `AuthUser` param at all,
+/// so anyone -- signed in or not -- could post regardless of what the
+/// frontend showed.
 async fn post_greeting(
     State(state): State<AppState>,
+    _user: AuthUser,
     Json(body): Json<NewGreeting>,
 ) -> Result<StatusCode, ApiError> {
     let name = body.name.trim();
