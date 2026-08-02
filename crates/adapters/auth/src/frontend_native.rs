@@ -65,6 +65,12 @@ pub fn fetch_auth_config(api_base_url: &str) -> Result<AuthConfig, String> {
 /// their result into a shared `Mutex`.
 pub struct LoginWidget {
     config: AuthConfig,
+    /// Set instead of ever constructing with a broken/empty [`AuthConfig`]
+    /// (e.g. `fetch_auth_config` failed) -- shown permanently in [`ui`](Self::ui)
+    /// instead of a "Sign in" button that would otherwise navigate to a
+    /// malformed `issuer_url` and hang [`start_login`] forever waiting for a
+    /// browser redirect that can never arrive.
+    config_error: Option<String>,
     session: Arc<Mutex<Option<Session>>>,
     error: Arc<Mutex<Option<String>>>,
     login_in_progress: Arc<Mutex<bool>>,
@@ -76,6 +82,29 @@ impl LoginWidget {
     pub fn new(config: AuthConfig) -> Self {
         Self {
             config,
+            config_error: None,
+            session: Arc::new(Mutex::new(None)),
+            error: Arc::new(Mutex::new(None)),
+            login_in_progress: Arc::new(Mutex::new(false)),
+            tried_restore: false,
+            menu_open: false,
+        }
+    }
+
+    /// Build a widget that can never attempt to sign in -- for when fetching
+    /// this app's own `/config/auth.json` failed at startup. Without this,
+    /// callers used to fall back to an empty `AuthConfig`, which let a user
+    /// click "Sign in" and hang indefinitely: `start_login` would open the
+    /// browser at a malformed (empty-issuer) URL that never redirects back,
+    /// and the pre-fix `accept_one_callback` blocked on that forever with no
+    /// timeout.
+    pub fn with_config_error(err: impl Into<String>) -> Self {
+        Self {
+            config: AuthConfig {
+                issuer_url: String::new(),
+                client_id: String::new(),
+            },
+            config_error: Some(err.into()),
             session: Arc::new(Mutex::new(None)),
             error: Arc::new(Mutex::new(None)),
             login_in_progress: Arc::new(Mutex::new(false)),
@@ -93,7 +122,7 @@ impl LoginWidget {
     /// run); otherwise a no-op until [`LoginWidget::start_login`] is
     /// called.
     pub fn tick(&mut self, _ctx: &egui::Context) {
-        if self.tried_restore {
+        if self.tried_restore || self.config_error.is_some() {
             return;
         }
         self.tried_restore = true;
@@ -166,6 +195,9 @@ impl LoginWidget {
     /// token-exchange dance on a background thread; poll [`is_authenticated`]
     /// on subsequent frames.
     pub fn start_login(&self) {
+        if self.config_error.is_some() {
+            return;
+        }
         {
             let mut in_progress = self.login_in_progress.lock().unwrap();
             if *in_progress {
@@ -206,6 +238,11 @@ impl LoginWidget {
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui) {
+        if let Some(err) = &self.config_error {
+            ui.colored_label(egui::Color32::RED, format!("sign-in unavailable: {err}"));
+            return;
+        }
+
         if let Some(err) = self.take_error() {
             ui.colored_label(egui::Color32::RED, &err);
             return;
@@ -214,6 +251,16 @@ impl LoginWidget {
         if *self.login_in_progress.lock().unwrap() {
             ui.spinner();
             ui.label("waiting for browser sign-in...");
+            // The background thread has its own timeout (see
+            // `accept_one_callback`) and will give up on its own even if
+            // the user never completes the browser flow, but that can take
+            // minutes -- this lets them stop waiting immediately without
+            // needing to kill the thread (harmless: it just keeps polling
+            // its own loopback listener in the background until it times
+            // out or succeeds, and a late success still logs them in).
+            if ui.small_button("Cancel").clicked() {
+                *self.login_in_progress.lock().unwrap() = false;
+            }
             return;
         }
 
@@ -313,13 +360,37 @@ fn run_loopback_login(config: &AuthConfig) -> Result<(Session, Option<String>), 
     Ok((session, refresh_token))
 }
 
-/// Blocks until exactly one HTTP request lands on the loopback listener,
-/// replies with a small "you can close this tab" page, and returns the
-/// `code`/`state` query params from the request line.
+/// Waits (up to `LOGIN_TIMEOUT`) for exactly one HTTP request to land on the
+/// loopback listener, replies with a small "you can close this tab" page,
+/// and returns the `code`/`state` query params from the request line.
+///
+/// Uses a non-blocking poll loop rather than a plain blocking `accept()`:
+/// the previous version blocked forever if the browser never redirected
+/// back at all (bad `issuer_url`, the user closing the tab, the passkey
+/// ceremony being abandoned, ...), which is exactly what left the "waiting
+/// for browser sign-in..." spinner stuck permanently with no way out.
+const LOGIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
 fn accept_one_callback(listener: &TcpListener) -> Result<(String, String), String> {
-    let (mut stream, _) = listener
-        .accept()
-        .map_err(|e| format!("accepting loopback connection: {e}"))?;
+    listener
+        .set_nonblocking(true)
+        .map_err(|e| format!("setting loopback listener non-blocking: {e}"))?;
+    let deadline = std::time::Instant::now() + LOGIN_TIMEOUT;
+    let mut stream = loop {
+        match listener.accept() {
+            Ok((stream, _)) => break stream,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                if std::time::Instant::now() >= deadline {
+                    return Err("timed out waiting for the browser to complete sign-in".to_string());
+                }
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+            Err(e) => return Err(format!("accepting loopback connection: {e}")),
+        }
+    };
+    stream
+        .set_nonblocking(false)
+        .map_err(|e| format!("setting loopback stream blocking: {e}"))?;
     let mut reader = BufReader::new(stream.try_clone().map_err(|e| e.to_string())?);
     let mut request_line = String::new();
     reader

@@ -44,14 +44,44 @@
       ul {
         padding-left: 1.2rem;
       }
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+      }
+      #auth-status {
+        font-size: 0.9rem;
+        color: #aaa;
+      }
+      #sign-in-btn {
+        background: #466ec8;
+      }
+      #sign-in-btn:hover {
+        background: #5a80d8;
+      }
+      #sign-out-btn {
+        background: transparent;
+        border: 1px solid #444;
+        color: inherit;
+      }
     </style>
   </head>
   <body>
     <main>
-      <h1>Webhello</h1>
+      <header>
+        <h1>Webhello</h1>
+        <div id="auth-area">
+          <span id="auth-status"></span>
+          <button id="sign-in-btn" hidden>Sign in</button>
+          <button id="sign-out-btn" hidden>Sign out</button>
+        </div>
+      </header>
       <p>
         Reference tool proving the "plain web frontend, no egui/wasm" path
         works end to end -- see <code>apps/webhello/backend/src/main.rs</code>.
+        Posting a greeting requires signing in (this app's own IDP client,
+        see <code>apps/webhello/backend/src/main.rs</code>'s doc comment).
       </p>
       <hr />
       <form id="greet-form">
@@ -61,6 +91,7 @@
         </label>
         <button type="submit">Say hello</button>
       </form>
+      <p id="auth-required" hidden>Sign in above to say hello.</p>
       <p id="error"></p>
       <hr />
       <p id="message">contacting backend...</p>
@@ -68,6 +99,166 @@
     </main>
 
     <script>
+      // ── Auth: a hand-rolled redirect+PKCE login flow, scoped to this
+      // app's own "webhello" IDP client_id. No wasm here (that's the whole
+      // point of this tool -- see the module doc comment), so this is the
+      // plain-JS equivalent of what `crates/adapters/auth::frontend_web`
+      // does for egui tools: same PKCE/state dance, same sessionStorage
+      // keys' *shape* (different names so the two never collide on a
+      // shared domain), same silent-passkey-ceremony-stays-on-the-IDP's-own-
+      // origin model.
+      let authConfig = null;
+      let accessToken = null;
+
+      function b64urlEncode(bytes) {
+        let binary = "";
+        for (const b of bytes) binary += String.fromCharCode(b);
+        return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+      }
+
+      function randomVerifier(nBytes) {
+        const bytes = new Uint8Array(nBytes);
+        crypto.getRandomValues(bytes);
+        return b64urlEncode(bytes);
+      }
+
+      async function pkceChallenge(verifier) {
+        const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
+        return b64urlEncode(new Uint8Array(digest));
+      }
+
+      function decodeJwtPayload(token) {
+        const payload = token.split(".")[1];
+        const padded = payload.replace(/-/g, "+").replace(/_/g, "/");
+        return JSON.parse(atob(padded));
+      }
+
+      function redirectUri() {
+        return window.location.origin + window.location.pathname;
+      }
+
+      async function startLogin() {
+        const verifier = randomVerifier(32);
+        const challenge = await pkceChallenge(verifier);
+        const state = randomVerifier(16);
+        sessionStorage.setItem("webhello_pkce_verifier", verifier);
+        sessionStorage.setItem("webhello_pkce_state", state);
+        const url = new URL(authConfig.issuer_url.replace(/\/$/, "") + "/oauth/authorize");
+        url.searchParams.set("response_type", "code");
+        url.searchParams.set("client_id", authConfig.client_id);
+        url.searchParams.set("redirect_uri", redirectUri());
+        url.searchParams.set("scope", "openid profile");
+        url.searchParams.set("state", state);
+        url.searchParams.set("code_challenge", challenge);
+        url.searchParams.set("code_challenge_method", "S256");
+        window.location.href = url.toString();
+      }
+
+      function signOut() {
+        accessToken = null;
+        sessionStorage.removeItem("webhello_access_token");
+        updateAuthUi();
+      }
+
+      async function exchangeCode(code) {
+        const verifier = sessionStorage.getItem("webhello_pkce_verifier");
+        sessionStorage.removeItem("webhello_pkce_verifier");
+        if (!verifier) {
+          throw new Error("missing PKCE verifier (was sessionStorage cleared?)");
+        }
+        const body = new URLSearchParams({
+          grant_type: "authorization_code",
+          code,
+          redirect_uri: redirectUri(),
+          client_id: authConfig.client_id,
+          code_verifier: verifier,
+        });
+        const res = await fetch(authConfig.issuer_url.replace(/\/$/, "") + "/oauth/token", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body,
+        });
+        if (!res.ok) {
+          throw new Error(`token endpoint returned ${res.status}`);
+        }
+        const token = await res.json();
+        accessToken = token.access_token;
+        sessionStorage.setItem("webhello_access_token", accessToken);
+      }
+
+      function isExpired(token) {
+        try {
+          const claims = decodeJwtPayload(token);
+          return claims.exp && claims.exp * 1000 < Date.now();
+        } catch {
+          return true;
+        }
+      }
+
+      function updateAuthUi() {
+        const statusEl = document.getElementById("auth-status");
+        const signInBtn = document.getElementById("sign-in-btn");
+        const signOutBtn = document.getElementById("sign-out-btn");
+        const authRequiredEl = document.getElementById("auth-required");
+        const submitBtn = formEl.querySelector("button[type=submit]");
+        const signedIn = accessToken && !isExpired(accessToken);
+        if (signedIn) {
+          const claims = decodeJwtPayload(accessToken);
+          statusEl.textContent = `signed in as ${claims.preferred_username || claims.sub}`;
+          signInBtn.hidden = true;
+          signOutBtn.hidden = false;
+        } else {
+          statusEl.textContent = "not signed in";
+          signInBtn.hidden = false;
+          signOutBtn.hidden = true;
+        }
+        authRequiredEl.hidden = signedIn;
+        submitBtn.disabled = !signedIn;
+      }
+
+      async function initAuth() {
+        try {
+          const res = await fetch("/config/auth.json");
+          authConfig = await res.json();
+        } catch (err) {
+          errorEl.textContent = `could not load auth config: ${err}`;
+          return;
+        }
+
+        const params = new URLSearchParams(window.location.search);
+        const code = params.get("code");
+        const state = params.get("state");
+        const oauthError = params.get("error");
+        if (code && state) {
+          window.history.replaceState(null, "", redirectUri());
+          const expectedState = sessionStorage.getItem("webhello_pkce_state");
+          sessionStorage.removeItem("webhello_pkce_state");
+          if (state !== expectedState) {
+            errorEl.textContent = "login response had an unexpected state parameter";
+          } else {
+            try {
+              await exchangeCode(code);
+            } catch (err) {
+              errorEl.textContent = `sign-in failed: ${err}`;
+            }
+          }
+        } else if (oauthError) {
+          window.history.replaceState(null, "", redirectUri());
+          errorEl.textContent = `sign-in failed: ${oauthError}`;
+        } else {
+          const stored = sessionStorage.getItem("webhello_access_token");
+          if (stored && !isExpired(stored)) {
+            accessToken = stored;
+          }
+        }
+        updateAuthUi();
+      }
+
+      document.getElementById("sign-in-btn").addEventListener("click", startLogin);
+      document.getElementById("sign-out-btn").addEventListener("click", signOut);
+
+      // ── Greetings ────────────────────────────────────────────────────
+
       const errorEl = document.getElementById("error");
       const messageEl = document.getElementById("message");
       const greetingsEl = document.getElementById("greetings");
@@ -97,14 +288,17 @@
       formEl.addEventListener("submit", async (event) => {
         event.preventDefault();
         const name = nameInputEl.value.trim();
-        if (!name) {
+        if (!name || !accessToken) {
           return;
         }
         errorEl.textContent = "";
         try {
           const res = await fetch("/api/greetings", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${accessToken}`,
+            },
             body: JSON.stringify({ name }),
           });
           if (!res.ok) {
@@ -117,6 +311,7 @@
         }
       });
 
+      initAuth();
       refreshStatus();
     </script>
   </body>

@@ -49,7 +49,7 @@
     <input id="new-client-roles" type="text" placeholder="admin, readonly" />
     <label for="new-client-claim">Roles claim name</label>
     <input id="new-client-claim" type="text" value="roles" />
-    <label><input id="new-client-restricted" type="checkbox" /> Restrict login to explicitly-granted users only</label>
+    <label><input id="new-client-restricted" type="checkbox" checked /> Restrict login to explicitly-granted users only (opt-in by default -- uncheck to let any IDP user log in)</label>
     <button id="create-client-btn">Create</button>
   </div>
 
@@ -268,7 +268,7 @@
       document.getElementById('new-client-redirects').value = '';
       document.getElementById('new-client-roles').value = '';
       document.getElementById('new-client-claim').value = 'roles';
-      document.getElementById('new-client-restricted').checked = false;
+      document.getElementById('new-client-restricted').checked = true;
       await loadClients();
     } catch (err) {
       showError(err);

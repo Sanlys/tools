@@ -620,7 +620,32 @@ async fn userinfo_core(app: &AppState, token: &str) -> Result<Json<serde_json::V
 
 // ── Session helpers (shared by passkey/admin routes) ──────────────────────────
 
-pub async fn require_session(app: &AppState, jar: &PrivateCookieJar) -> Result<db::User, AppError> {
+/// Resolves the caller's identity from either the IDP's own first-party
+/// session cookie (used by `apps/idp/frontend/static`'s pages) *or* a valid
+/// `Authorization: Bearer` access/ID token issued by this same IDP for
+/// *any* client_id. The latter is what lets another tool's own frontend
+/// (e.g. the portal's egui "Account" panel, authenticated as the `portal`
+/// client) manage the signed-in user's profile/passkeys/sessions -- and,
+/// if they're an admin, the rest of `/api/admin/*` -- without a separate
+/// cookie-based login against the IDP's own origin. Proving "who is this
+/// person" only needs a validly-signed token with a `sub`; it doesn't
+/// matter which client_id it was minted for, since that only scopes the
+/// token's `roles` claim, not its subject.
+pub async fn require_session(
+    app: &AppState,
+    headers: &HeaderMap,
+    jar: &PrivateCookieJar,
+) -> Result<db::User, AppError> {
+    if let Some(token) = bearer_token(headers) {
+        let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::RS256);
+        validation.validate_aud = false;
+        let data = jsonwebtoken::decode::<Claims>(&token, &app.jwt_keys.decoding, &validation)
+            .map_err(|e| AppError::Unauthorized(format!("invalid bearer token: {e}")))?;
+        return db::get_user_by_id(&app.db, &data.claims.sub)
+            .await?
+            .ok_or_else(|| AppError::NotFound("user not found".into()));
+    }
+
     let session_id = jar
         .get("session")
         .map(|c| c.value().to_string())
@@ -634,8 +659,12 @@ pub async fn require_session(app: &AppState, jar: &PrivateCookieJar) -> Result<d
     Ok(user)
 }
 
-pub async fn require_admin(app: &AppState, jar: &PrivateCookieJar) -> Result<db::User, AppError> {
-    let user = require_session(app, jar).await?;
+pub async fn require_admin(
+    app: &AppState,
+    headers: &HeaderMap,
+    jar: &PrivateCookieJar,
+) -> Result<db::User, AppError> {
+    let user = require_session(app, headers, jar).await?;
     if !user.is_admin {
         return Err(AppError::Forbidden("admin required".into()));
     }

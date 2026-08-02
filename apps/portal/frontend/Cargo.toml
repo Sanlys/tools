@@ -24,6 +24,9 @@ tracing.workspace = true
 
 egui.workspace = true
 eframe.workspace = true
+ehttp.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"

@@ -15,7 +15,15 @@ image:
 imagePullSecrets: []
 replicaCount: 1
 containerPort: 8082
-env: []
+env:
+  # This app's own sign-in state -- see deploy/idp/values.yaml's
+  # IDP_CLIENTS_JSON "webhello" entry and apps/webhello/backend/src/main.rs's
+  # doc comment (plain-JS PKCE flow, no auth_adapter frontend crate since
+  # this tool has no wasm at all).
+  - name: IDP_ISSUER_URL
+    value: "https://idp.k8s.lysakermoen.com"
+  - name: AUTH_CLIENT_ID
+    value: "webhello"
 envFrom: []
 resources:
   requests:

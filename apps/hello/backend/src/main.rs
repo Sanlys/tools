@@ -153,10 +153,27 @@ async fn post_greeting(
     if name.is_empty() {
         return Err(ApiError("name must not be empty".to_string()));
     }
-    sqlx::query("INSERT INTO greetings (name) VALUES ($1)")
+    let id: i32 = sqlx::query_scalar("INSERT INTO greetings (name) VALUES ($1) RETURNING id")
         .bind(name)
-        .execute(&state.pg_pool)
+        .fetch_one(&state.pg_pool)
         .await?;
+
+    // The other half of what this tool is meant to demonstrate: one small
+    // object per greeting, so `bucket_object_count` below (and the bucket
+    // itself) actually reflects real S3 usage instead of `list_objects_v2`
+    // always reading back an empty bucket.
+    state
+        .s3_client
+        .put_object()
+        .bucket(&state.bucket)
+        .key(format!("greetings/{id}.txt"))
+        .body(aws_sdk_s3::primitives::ByteStream::from(
+            name.as_bytes().to_vec(),
+        ))
+        .send()
+        .await
+        .map_err(|err| ApiError(err.to_string()))?;
+
     Ok(StatusCode::CREATED)
 }
 

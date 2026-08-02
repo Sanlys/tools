@@ -397,8 +397,9 @@ pub async fn logout(
 pub async fn add_passkey_start(
     State(state): State<AppState>,
     jar: PrivateCookieJar,
+    headers: HeaderMap,
 ) -> Result<Json<RegisterStartResponse>, AppError> {
-    let user = require_session(&state, &jar).await?;
+    let user = require_session(&state, &headers, &jar).await?;
     let existing_creds = db::get_credentials_for_user(&state.db, &user.id)
         .await?
         .into_iter()
@@ -442,9 +443,10 @@ pub struct AddPasskeyFinishRequest {
 pub async fn add_passkey_finish(
     State(state): State<AppState>,
     jar: PrivateCookieJar,
+    headers: HeaderMap,
     Json(req): Json<AddPasskeyFinishRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    let user = require_session(&state, &jar).await?;
+    let user = require_session(&state, &headers, &jar).await?;
     let (challenge_user_id, _username, _invite_id, state_json) =
         db::get_and_delete_webauthn_registration_challenge(&state.db, &req.challenge_id)
             .await?
@@ -487,18 +489,12 @@ pub async fn setup_status(State(state): State<AppState>) -> Result<impl IntoResp
 pub async fn me(
     State(state): State<AppState>,
     jar: PrivateCookieJar,
+    headers: HeaderMap,
 ) -> Result<impl IntoResponse, AppError> {
-    let session_id = jar
-        .get("session")
-        .map(|c| c.value().to_string())
-        .ok_or_else(|| AppError::Unauthorized("not logged in".into()))?;
-    let session = db::get_session(&state.db, &session_id)
-        .await?
-        .ok_or_else(|| AppError::Unauthorized("session expired".into()))?;
-    let _ = db::touch_session(&state.db, &session_id).await;
-    let user = db::get_user_by_id(&state.db, &session.user_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound("user not found".into()))?;
+    let user = require_session(&state, &headers, &jar).await?;
+    if let Some(session_id) = jar.get("session").map(|c| c.value().to_string()) {
+        let _ = db::touch_session(&state.db, &session_id).await;
+    }
     let apps = db::list_roles_for_user(&state.db, &user.id).await?;
 
     Ok(Json(serde_json::json!({
@@ -520,9 +516,10 @@ pub struct UpdateProfileRequest {
 pub async fn update_profile(
     State(state): State<AppState>,
     jar: PrivateCookieJar,
+    headers: HeaderMap,
     Json(req): Json<UpdateProfileRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    let user = require_session(&state, &jar).await?;
+    let user = require_session(&state, &headers, &jar).await?;
     let display_name = req.display_name.trim();
     if display_name.is_empty() {
         return Err(AppError::BadRequest("display_name cannot be empty".into()));
@@ -534,8 +531,9 @@ pub async fn update_profile(
 pub async fn list_passkeys(
     State(state): State<AppState>,
     jar: PrivateCookieJar,
+    headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let user = require_session(&state, &jar).await?;
+    let user = require_session(&state, &headers, &jar).await?;
     let creds = db::get_credentials_for_user(&state.db, &user.id).await?;
     let list: Vec<_> = creds
         .iter()
@@ -547,9 +545,10 @@ pub async fn list_passkeys(
 pub async fn delete_passkey(
     State(state): State<AppState>,
     jar: PrivateCookieJar,
+    headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, AppError> {
-    let user = require_session(&state, &jar).await?;
+    let user = require_session(&state, &headers, &jar).await?;
     let deleted = db::delete_credential(&state.db, &id, &user.id).await?;
     if deleted {
         Ok(axum::http::StatusCode::NO_CONTENT)
@@ -561,8 +560,9 @@ pub async fn delete_passkey(
 pub async fn list_sessions(
     State(state): State<AppState>,
     jar: PrivateCookieJar,
+    headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let user = require_session(&state, &jar).await?;
+    let user = require_session(&state, &headers, &jar).await?;
     let sessions = db::list_sessions_for_user(&state.db, &user.id).await?;
     let list: Vec<_> = sessions
         .iter()
@@ -579,9 +579,10 @@ pub async fn list_sessions(
 pub async fn revoke_session(
     State(state): State<AppState>,
     jar: PrivateCookieJar,
+    headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, AppError> {
-    let user = require_session(&state, &jar).await?;
+    let user = require_session(&state, &headers, &jar).await?;
     let deleted = db::delete_session(&state.db, &id, &user.id).await?;
     if deleted {
         Ok(axum::http::StatusCode::NO_CONTENT)
@@ -593,8 +594,9 @@ pub async fn revoke_session(
 pub async fn revoke_all_sessions(
     State(state): State<AppState>,
     jar: PrivateCookieJar,
+    headers: HeaderMap,
 ) -> Result<impl IntoResponse, AppError> {
-    let user = require_session(&state, &jar).await?;
+    let user = require_session(&state, &headers, &jar).await?;
     db::delete_all_sessions(&state.db, &user.id).await?;
     Ok(axum::http::StatusCode::NO_CONTENT)
 }

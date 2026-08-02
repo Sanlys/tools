@@ -6,6 +6,11 @@
 # pattern) -- adding auth to a new tool means adding an entry here, not
 # calling an admin API. Every client is a *public* client (PKCE only, no
 # client_secret) -- see docs/architecture.md for why that's safe here.
+# `access_restricted: true` is opt-in-by-default -- an admin must grant
+# each user explicit `user_app_access` before they can log into any client
+# at all (see docs/architecture.md's "App login access" section), even for
+# this repo's own built-in tools. Set to `false` for anything that should
+# stay open to every IDP user with no per-user grant needed.
 
 nameOverride: "idp"
 fullnameOverride: ""
@@ -42,7 +47,8 @@ env:
           "name": "Tools Portal",
           "redirect_uris": ["https://portal.k8s.lysakermoen.com/"],
           "roles": [],
-          "native": false
+          "native": false,
+          "access_restricted": true
         },
         {
           "client_id": "hello",
@@ -52,7 +58,16 @@ env:
             "http://127.0.0.1:0/callback"
           ],
           "roles": ["operator"],
-          "native": true
+          "native": true,
+          "access_restricted": true
+        },
+        {
+          "client_id": "webhello",
+          "name": "Webhello",
+          "redirect_uris": ["https://webhello.k8s.lysakermoen.com/"],
+          "roles": [],
+          "native": false,
+          "access_restricted": true
         }
       ]
 serviceAccount:
