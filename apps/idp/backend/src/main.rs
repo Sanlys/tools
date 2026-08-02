@@ -115,6 +115,7 @@ async fn main() -> anyhow::Result<()> {
             get(routes::oauth::userinfo).post(routes::oauth::userinfo_post),
         )
         .route("/oauth/revoke", post(routes::oauth::revoke))
+        .route("/oauth/roles", get(routes::oauth::roles_for_client))
         // ── Passkey auth API ────────────────────────────────────────────
         .route("/api/setup/status", get(routes::passkey::setup_status))
         .route("/api/register/start", post(routes::passkey::register_start))

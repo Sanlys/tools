@@ -618,6 +618,55 @@ async fn userinfo_core(app: &AppState, token: &str) -> Result<Json<serde_json::V
     Ok(Json(body))
 }
 
+// ── Cross-audience roles lookup ───────────────────────────────────────────────
+//
+// `/oauth/userinfo` only ever answers "what are this token's *own* roles" --
+// which is the wrong question for a tool whose backend received a bearer
+// token minted for a *different* client_id (e.g. the portal's own login,
+// reused as identity proof by one of its embedded panels; see
+// `crates/adapters/auth::backend::AuthState::verify`'s cross-audience
+// fallback). This answers "given who this token says signed in, what are
+// *this other* client_id's roles for them" -- a fresh DB lookup, not
+// anything embedded in the token, so it can't be spoofed by presenting a
+// token minted for whatever `client_id` the caller wants to ask about.
+
+#[derive(Debug, Deserialize, Default)]
+pub struct RolesQuery {
+    pub client_id: Option<String>,
+}
+
+pub async fn roles_for_client(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<RolesQuery>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let token = bearer_token(&headers)
+        .ok_or_else(|| AppError::Unauthorized("missing bearer token".into()))?;
+    let client_id = q
+        .client_id
+        .ok_or_else(|| AppError::BadRequest("client_id required".into()))?;
+
+    let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::RS256);
+    validation.validate_aud = false;
+    let data = jsonwebtoken::decode::<Claims>(&token, &app.jwt_keys.decoding, &validation)?;
+
+    let client = db::get_client(&app.db, &client_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("unknown client_id".into()))?;
+    if client.access_restricted
+        && !db::user_has_access(&app.db, &data.claims.sub, &client_id).await?
+    {
+        return Err(AppError::Forbidden(
+            "access to this app has not been granted".into(),
+        ));
+    }
+
+    let roles = db::granted_roles(&app.db, &data.claims.sub, &client_id).await?;
+    Ok(Json(
+        serde_json::json!({ "sub": data.claims.sub, "client_id": client_id, "roles": roles }),
+    ))
+}
+
 // ── Session helpers (shared by passkey/admin routes) ──────────────────────────
 
 /// Resolves the caller's identity from either the IDP's own first-party
