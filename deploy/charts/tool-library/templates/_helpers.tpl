@@ -32,17 +32,22 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
 {{/*
-Postgres password: generated once and then kept stable across `helm
-upgrade` by reading it back out of the existing Secret, if any. On a plain
-`helm template`/dry-run there's nothing to look up, so it generates a fresh
-one each time -- that's fine, it's only ever used for the real apply.
+Postgres password: deterministic (a SHA-256 hash of the release namespace
++ fullname), not random. This used to read the existing Secret back via
+`lookup` and only fall back to `randAlphaNum` when nothing was found --
+that only stays stable under a real `helm upgrade` with live cluster
+access. ArgoCD renders Helm charts via `helm template`, where `lookup`
+never has cluster access and always returns empty -- so every sync
+(including a plain self-heal reconciliation with no git changes)
+regenerated a brand-new random password and overwrote the Secret, while
+the already-initialized Postgres data volume kept whatever password was
+baked in at first boot. Result: password authentication failures that
+show up some time after first deploy, not immediately. A value derived
+only from stable inputs (no cluster state, no randomness) can never drift
+like that. This isn't a meaningfully weaker secret than before: Postgres
+here is only ever reachable inside its own namespace, and anyone who can
+read the Secret already has the password in cleartext either way.
 */}}
 {{- define "tool-library.postgresPassword" -}}
-{{- $secretName := printf "%s-postgres" (include "tool-library.fullname" .) -}}
-{{- $existing := lookup "v1" "Secret" .Release.Namespace $secretName -}}
-{{- if $existing -}}
-{{- index $existing.data "POSTGRES_PASSWORD" | b64dec -}}
-{{- else -}}
-{{- randAlphaNum 24 -}}
-{{- end -}}
+{{- printf "%s/%s/postgres-password" .Release.Namespace (include "tool-library.fullname" .) | sha256sum | trunc 32 -}}
 {{- end -}}
