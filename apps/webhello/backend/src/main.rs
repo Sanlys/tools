@@ -17,9 +17,14 @@
 //! Posting a greeting requires being signed in (any authenticated user, no
 //! specific role) -- see `post_greeting` below.
 //!
-//! Deliberately skips Postgres/S3 (unlike `hello`, which exercises both) to
-//! keep the point of this example -- the frontend stack, not the backend
-//! adapters -- unobscured. State is an in-memory `Vec`, not persisted.
+//! This is a genuinely separate deployable process from `hello`, with its
+//! own client_id/tokens -- but it is **not** a separate app/dataset:
+//! it reads and writes `hello`'s own `greetings` table and S3 bucket
+//! (`deploy/webhello/values.yaml`'s `envFrom` points straight at the
+//! Secrets/ConfigMap `deploy/hello`'s chart creates), deployed into
+//! `hello`'s own namespace. The point of this example is the *frontend*
+//! stack difference, not a second isolated backend -- posting a greeting
+//! here shows up in `hello`'s own count too, and vice versa.
 
 use auth_adapter::backend::{AuthState, AuthUser};
 use axum::extract::{FromRef, State};
@@ -28,13 +33,14 @@ use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex};
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
 
 #[derive(Clone)]
 struct AppState {
-    greetings: Arc<Mutex<Vec<String>>>,
+    pg_pool: sqlx::PgPool,
+    s3_client: aws_sdk_s3::Client,
+    bucket: String,
     auth: AuthState,
 }
 
@@ -50,9 +56,30 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
+    let (s3_client, s3_cfg) =
+        s3_adapter::client_from_env().map_err(|err| anyhow::anyhow!("s3 config: {err}"))?;
+    let pg_pool = postgres_adapter::pool_from_env()
+        .await
+        .map_err(|err| anyhow::anyhow!("postgres config: {err}"))?;
+
+    // Same table `hello` creates -- idempotent, and a harmless safety net
+    // regardless of which of the two apps happens to start first (there's
+    // no ordering guarantee between their separate ArgoCD Applications).
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS greetings ( \
+            id SERIAL PRIMARY KEY, \
+            name TEXT NOT NULL, \
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now() \
+        )",
+    )
+    .execute(&pg_pool)
+    .await?;
+
     let auth = AuthState::from_env("webhello");
     let state = AppState {
-        greetings: Arc::new(Mutex::new(Vec::new())),
+        pg_pool,
+        s3_client,
+        bucket: s3_cfg.bucket_name,
         auth: auth.clone(),
     };
 
@@ -94,16 +121,24 @@ struct StatusResponse {
     greetings: Vec<String>,
 }
 
-async fn get_status(State(state): State<AppState>) -> Json<StatusResponse> {
-    let greetings = state
-        .greetings
-        .lock()
-        .expect("greetings mutex poisoned")
-        .clone();
-    Json(StatusResponse {
-        message: "webhello-backend is up".to_string(),
+/// Requires being signed in -- the greeting list below is `hello`'s own
+/// data (see this module's doc comment), and shouldn't be visible to a
+/// logged-out caller any more than `hello`'s own status endpoint is.
+async fn get_status(
+    State(state): State<AppState>,
+    _user: AuthUser,
+) -> Result<Json<StatusResponse>, ApiError> {
+    let greetings: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM greetings ORDER BY created_at ASC")
+            .fetch_all(&state.pg_pool)
+            .await?;
+    Ok(Json(StatusResponse {
+        message: format!(
+            "webhello-backend is up, sharing hello's bucket `{}`",
+            state.bucket
+        ),
         greetings,
-    })
+    }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -124,18 +159,38 @@ async fn post_greeting(
     if name.is_empty() {
         return Err(ApiError("name must not be empty".to_string()));
     }
+    let id: i32 = sqlx::query_scalar("INSERT INTO greetings (name) VALUES ($1) RETURNING id")
+        .bind(name)
+        .fetch_one(&state.pg_pool)
+        .await?;
+
+    // Same S3 demonstration as `hello`'s own `post_greeting` -- same
+    // bucket, so this shows up in `hello`'s own object count too.
     state
-        .greetings
-        .lock()
-        .expect("greetings mutex poisoned")
-        .push(name.to_string());
+        .s3_client
+        .put_object()
+        .bucket(&state.bucket)
+        .key(format!("greetings/{id}.txt"))
+        .body(aws_sdk_s3::primitives::ByteStream::from(
+            name.as_bytes().to_vec(),
+        ))
+        .send()
+        .await
+        .map_err(|err| ApiError(err.to_string()))?;
+
     Ok(StatusCode::CREATED)
 }
 
 struct ApiError(String);
 
+impl From<sqlx::Error> for ApiError {
+    fn from(err: sqlx::Error) -> Self {
+        Self(err.to_string())
+    }
+}
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> axum::response::Response {
-        (StatusCode::BAD_REQUEST, self.0).into_response()
+        (StatusCode::INTERNAL_SERVER_ERROR, self.0).into_response()
     }
 }

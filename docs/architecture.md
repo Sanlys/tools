@@ -104,6 +104,18 @@ calls, no wasm/build step, no `Panel` impl, and correspondingly no
 link-out list, the same way a tool with an unreachable/broken standalone
 build would (the difference is `webhello`'s actually works).
 
+`webhello` is a genuinely separate deployable process (own Deployment, own
+IDP client/tokens) from `hello`, but **not** a separate dataset: its
+`deploy/webhello` Application deploys into `hello`'s own namespace
+(`tools-hello`) and its `envFrom` points straight at the Secrets/ConfigMap
+`hello`'s own chart creates (`tools-hello-postgres`, `tools-hello-bucket`)
+instead of provisioning its own -- so it reads and writes the exact same
+`greetings` table and S3 bucket `hello` does. The point being demonstrated
+is the frontend-stack difference, not a second isolated backend; treat the
+two as one coupled family (like the `media` app's qbittorrent + arr stack
++ jellyfin sharing one bucket) rather than the "one namespace per app"
+default.
+
 ## Backends
 
 Every tool's backend is a plain axum service. It's reachable from the

@@ -214,6 +214,7 @@
         }
         authRequiredEl.hidden = signedIn;
         submitBtn.disabled = !signedIn;
+        refreshStatus();
       }
 
       async function initAuth() {
@@ -267,8 +268,18 @@
 
       async function refreshStatus() {
         errorEl.textContent = "";
+        // /api/status requires being signed in (it's hello's own greeting
+        // data -- see apps/webhello/backend/src/main.rs's doc comment), so
+        // there's nothing to show a logged-out visitor.
+        if (!accessToken) {
+          messageEl.textContent = "Sign in above to view this tool's status.";
+          greetingsEl.innerHTML = "";
+          return;
+        }
         try {
-          const res = await fetch("/api/status");
+          const res = await fetch("/api/status", {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          });
           if (!res.ok) {
             throw new Error(`${res.status} ${res.statusText}`);
           }
@@ -312,7 +323,6 @@
       });
 
       initAuth();
-      refreshStatus();
     </script>
   </body>
 </html>

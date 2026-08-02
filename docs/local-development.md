@@ -113,11 +113,15 @@ so this build can use the same relative, same-origin URLs
 (`HelloPanel::new("")`) it uses in production, where `hello-backend` serves
 both the API and this compiled bundle from one container.
 
-`apps/webhello` has no wasm build at all -- it's a static page. Run its
-backend (`cargo run -p webhello-backend`, defaulting to `0.0.0.0:8082`) and
-open `http://localhost:8082` directly; `STATIC_DIR` defaults to `./static`
-relative to the process's cwd, so run it from `apps/webhello/backend/` (or
-set `STATIC_DIR` explicitly) rather than the repo root.
+`apps/webhello` has no wasm build at all -- it's a static page. It shares
+`hello`'s own Postgres table and S3 bucket rather than having its own (see
+its module doc comment), so it needs step 1's `docker compose up -d` and
+the same `.env` step 2 uses -- run it alongside `hello-backend`, not
+instead of it. Run its backend (`cargo run -p webhello-backend`, defaulting
+to `0.0.0.0:8082`) and open `http://localhost:8082` directly; `STATIC_DIR`
+defaults to `./static` relative to the process's cwd, so run it from
+`apps/webhello/backend/` (or set `STATIC_DIR` explicitly) rather than the
+repo root.
 
 ## 6. Run the IDP locally (to test auth end to end)
 
