@@ -97,6 +97,7 @@ async fn main() -> anyhow::Result<()> {
     let (metrics_layer, metrics_router) = metrics_adapter::metrics_layer()?;
 
     let app = Router::new()
+        .route("/health", get(health))
         // ── OIDC discovery ──────────────────────────────────────────────
         .route(
             "/.well-known/openid-configuration",
@@ -194,6 +195,10 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+async fn health() -> &'static str {
+    "ok"
 }
 
 /// Loads the private-cookie encryption key from `COOKIE_SECRET` if set,
