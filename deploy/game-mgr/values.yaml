@@ -1,0 +1,76 @@
+# Values for `game-mgr` -- ported from the standalone game-mgr repo (see
+# apps/game-mgr's module docs). Copy deploy/hello/values.yaml's shape for a
+# new tool that needs Postgres but no S3 bucket -- this one skips the bucket
+# entirely because gm-server never touches S3 (only the desktop client
+# does, directly against the bucket with its own credentials -- see
+# apps/game-mgr/core's module docs).
+
+nameOverride: "game-mgr"
+fullnameOverride: ""
+image:
+  repository: harbor.k8s.lysakermoen.com/tools/game-mgr-backend
+  tag: "latest"
+  pullPolicy: IfNotPresent
+# Not needed as long as the `tools` Harbor project allows anonymous pull --
+# see deploy/hello/values.yaml's comment.
+imagePullSecrets: []
+replicaCount: 1
+containerPort: 8083
+env:
+  # This app's own sign-in state -- see deploy/idp/values.yaml's
+  # IDP_CLIENTS_JSON "game-mgr" entry and crates/adapters/auth's docs.
+  - name: IDP_ISSUER_URL
+    value: "https://idp.k8s.lysakermoen.com"
+  - name: AUTH_CLIENT_ID
+    value: "game-mgr"
+envFrom: []
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 128Mi
+serviceAccount:
+  create: false
+# Lets the portal's dashboard read this Deployment's readiness -- a
+# namespace-scoped Role/RoleBinding in tools-game-mgr only, granted to the
+# portal's ServiceAccount (see deploy/portal/values.yaml).
+dashboardGrant:
+  enabled: true
+  subjectName: tools-portal
+  subjectNamespace: tools-portal
+# Public + bare-domain: gm-client instances run on gaming machines that may
+# not be on the home network, so this backend needs to be internet-reachable
+# the same way game-mgr's own original (pre-port) design already required --
+# independent of the frontend swap from React to an egui panel.
+ingress:
+  enabled: true
+  className: public
+  host: games.lysakermoen.com
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-public
+  tls:
+    enabled: true
+    secretName: games-lysakermoen-com-tls
+bucket:
+  enabled: false
+postgres:
+  enabled: true
+  image: postgres:16-alpine
+  storage: 1Gi
+  storageClassName: rook-ceph-block-ssd
+  database: gamemgr
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 256Mi
+monitoring:
+  enabled: true
+  interval: 30s
+  serviceMonitorLabels: {}
+  prometheusRuleLabels: {}
+  dashboardNamespace: "monitoring"
+  alerts:
+    enabled: true

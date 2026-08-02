@@ -68,6 +68,17 @@ env:
           "roles": [],
           "native": false,
           "access_restricted": true
+        },
+        {
+          "client_id": "game-mgr",
+          "name": "game-mgr",
+          "redirect_uris": [
+            "https://games.lysakermoen.com/",
+            "http://127.0.0.1:0/callback"
+          ],
+          "roles": [],
+          "native": true,
+          "access_restricted": false
         }
       ]
 serviceAccount:
