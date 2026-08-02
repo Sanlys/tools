@@ -162,21 +162,58 @@ from-scratch OIDC provider + WebAuthn passkey login), as its own app here:
   egui/wasm: any OAuth client redirecting a browser here -- including a
   hypothetical one outside this whole Rust workspace -- gets a small, fast
   login page regardless of what stack that client is built with.
-- No consent screen and no dynamic OAuth client registration: every client
-  (and the role vocabulary it declares) is listed once in the IDP's own
-  `IDP_CLIENTS_JSON` (`deploy/idp/values.yaml`), the same "static,
-  GitOps-declared registry" pattern the portal already uses for
-  `TOOLS_REGISTRY_JSON`. Every client is a *public* client (PKCE only, no
-  `client_secret`) -- safe because every client here is first-party and
-  known in advance, and it means the IDP needs zero sops-managed secrets
+- No consent screen, and every client is a *public* client (PKCE only, no
+  `client_secret` -- there is no such field anywhere in this IDP, for
+  either kind of client below). Safe because every client here is
+  first-party or admin-registered, never a third party doing dynamic
+  self-registration; and it means the IDP needs zero sops-managed secrets
   of its own (its RS256 signing key and cookie-encryption key are
   generated on first boot and persisted in its own Postgres, same idea as
-  the original design).
+  the original design). Two ways a client gets registered:
+  - **This repo's own tools** (portal, hello, webhello, ...): listed once
+    in `IDP_CLIENTS_JSON` (`deploy/idp/values.yaml`), the same "static,
+    GitOps-declared registry" pattern the portal already uses for
+    `TOOLS_REGISTRY_JSON`. Reconciled into the `clients` table at boot
+    (`db::reconcile_clients`); read-only from the admin UI.
+  - **Everything else** (an external app outside this whole Rust
+    workspace, e.g. ArgoCD): registered ad hoc through the IDP's own
+    `/admin` page ("Register a new app"), stored directly in the DB
+    (`clients.managed = true`). Never touched by a redeploy's JSON
+    reconciliation. See "Registering an external OAuth app" below.
 - Per-app, per-user role grants (`user_app_roles`) sit on top of "is
   logged in": each client declares its own flat list of role-name strings,
   an admin grants specific users specific roles for a specific app from
   the IDP's `/admin` page, and that app's issued token carries only the
-  roles granted for *that app's own* `client_id` (never another app's).
+  roles granted for *that app's own* `client_id` (never another app's). A
+  client can override which JWT claim name that list is emitted under
+  (`roles_claim`, defaults to `"roles"`) -- useful for an external relying
+  party with its own claim-name expectations (see below).
+- A client can also be marked `access_restricted`: then a user needs an
+  *explicit* `user_app_access` grant just to complete login for that
+  client at all, independent of role grants (which are about what a
+  logged-in user can *do*, not whether they can log in in the first
+  place). `/oauth/authorize` returns `error=access_denied` for anyone
+  without that grant once it's set. Unrestricted (the default) means any
+  IDP user can log into that client, same behavior as before this existed.
+
+### Registering an external OAuth app (e.g. ArgoCD)
+
+From the IDP's `/admin` page, "Register a new app": pick a `client_id`,
+list the app's real redirect URI(s), and (optionally) a role vocabulary. No
+`client_secret` is issued or needed -- ArgoCD (v2.4+) supports OIDC login as
+a public client with PKCE (`oidc.config.enablePKCEAuthentication: true` in
+its `argocd-cm`), the same mechanism this IDP's own tools already use.
+
+ArgoCD's RBAC maps policies from group membership under a `groups` claim by
+default, not this IDP's own `roles` claim -- set the new client's
+`roles_claim` to `groups` so ArgoCD's `policy.csv` sees the same per-app
+role grants under the name it expects, with no extra logic on the IDP side.
+
+To restrict who's even allowed to authenticate as that client (e.g. only
+you, even though other IDP users exist): check "Restrict login" when
+registering it, then grant yourself explicit access in the "App login
+access" section of `/admin`. Everyone else gets `access_denied` at
+`/oauth/authorize` before a code is ever issued.
 - **`crates/adapters/auth`** is the shared library every other tool
   depends on: a `backend` feature (`AuthUser` axum extractor + `AuthState`,
   verifying a Bearer JWT against the IDP's JWKS) for backends, and a
