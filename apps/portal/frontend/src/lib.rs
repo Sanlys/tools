@@ -28,6 +28,11 @@ pub enum ToolPanel {
     Home(HomePanel),
     Dashboard(DashboardPanel),
     Hello(hello_frontend::HelloPanel),
+    // Boxed: `GameMgrPanel` carries several `JsonResource`s (one per tab)
+    // and is much larger than every other variant here, which clippy's
+    // `large_enum_variant` flags -- boxing keeps `ToolPanel` itself small
+    // regardless of how large any one tool's panel state gets.
+    GameMgr(Box<game_mgr_frontend::GameMgrPanel>),
     /// Wasm-only: this panel calls the IDP's own API directly using the
     /// portal's bearer token (see `panels::idp`'s doc comment) -- the
     /// native portal binary has no sign-in UI at all today, so there's
@@ -46,6 +51,7 @@ macro_rules! dispatch {
             ToolPanel::Home($panel) => $body,
             ToolPanel::Dashboard($panel) => $body,
             ToolPanel::Hello($panel) => $body,
+            ToolPanel::GameMgr($panel) => $body,
             #[cfg(target_arch = "wasm32")]
             ToolPanel::Idp($panel) => $body,
         }
@@ -138,7 +144,7 @@ impl PortalApp {
     /// offer an inline "open panel" button or just a link out, same
     /// treatment `HomePanel` already gives every tool.
     fn has_panel(id: &str) -> bool {
-        matches!(id, "hello")
+        matches!(id, "hello" | "game-mgr")
     }
 
     /// Opens the compiled-in panel for a tool from the runtime registry.
@@ -155,6 +161,10 @@ impl PortalApp {
                 link.api_base_url.clone(),
                 true,
             )),
+            "game-mgr" => ToolPanel::GameMgr(Box::new(game_mgr_frontend::GameMgrPanel::new(
+                link.api_base_url.clone(),
+                true,
+            ))),
             other => {
                 tracing::warn!(
                     "no compiled-in panel for tool id `{other}`; add a ToolPanel variant in \
@@ -276,6 +286,9 @@ impl eframe::App for PortalApp {
                 }
                 ToolPanel::Hello(hello) => {
                     hello.set_portal_token(self.login.bearer_token());
+                }
+                ToolPanel::GameMgr(game_mgr) => {
+                    game_mgr.set_portal_token(self.login.bearer_token());
                 }
                 _ => {}
             }
