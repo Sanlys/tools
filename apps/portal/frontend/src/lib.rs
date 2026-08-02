@@ -151,7 +151,10 @@ impl PortalApp {
             return;
         }
         let panel: ToolPanel = match link.id.as_str() {
-            "hello" => ToolPanel::Hello(hello_frontend::HelloPanel::new(link.api_base_url.clone())),
+            "hello" => ToolPanel::Hello(hello_frontend::HelloPanel::new(
+                link.api_base_url.clone(),
+                true,
+            )),
             other => {
                 tracing::warn!(
                     "no compiled-in panel for tool id `{other}`; add a ToolPanel variant in \

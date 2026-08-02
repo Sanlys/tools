@@ -14,7 +14,8 @@ fn main() {
     // actually developing against a local `hello-backend`.
     let api_base_url = std::env::var("HELLO_API_BASE_URL")
         .unwrap_or_else(|_| "https://hello.k8s.lysakermoen.com".to_string());
-    if let Err(err) = platform_core::standalone::run(hello_frontend::HelloPanel::new(api_base_url))
+    if let Err(err) =
+        platform_core::standalone::run(hello_frontend::HelloPanel::new(api_base_url, false))
     {
         eprintln!("hello-standalone exited with error: {err}");
         std::process::exit(1);

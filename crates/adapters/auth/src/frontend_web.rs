@@ -8,13 +8,23 @@
 //! WebAuthn/`navigator.credentials` itself. That keeps every tool's wasm
 //! bundle small and means the exact same flow works for a hypothetical
 //! external, non-Rust OAuth client redirecting a browser at the same IDP.
+//!
+//! Every `sessionStorage` key here is namespaced by `client_id`
+//! (`storage_key`) -- the portal's own top-bar `LoginWidget` (client_id
+//! "portal") and an embedded tool's own `LoginWidget` (e.g. client_id
+//! "hello") run in the exact same browser tab/origin, so unscoped keys
+//! would have them silently clobber each other's session (whichever signed
+//! in most recently would win, and the other would show that session's
+//! claims/roles under the wrong audience). This was a real, previously
+//! unnoticed bug: `sign_out` also used to clear a key ("auth_session")
+//! that was never the one actually written, so "sign out" never forgot
+//! anything at all -- that plus the sharing bug together produced "sign
+//! out, refresh, still signed in" and "the wrong tool's roles show up".
 
 use crate::{pkce, AuthConfig};
 use serde::Deserialize;
-
-const VERIFIER_KEY: &str = "auth_pkce_verifier";
-const STATE_KEY: &str = "auth_pkce_state";
-const SILENT_KEY: &str = "auth_silent_attempt";
+use std::cell::RefCell;
+use std::collections::HashMap;
 
 /// Bare-minimum claims read out of the (unverified, client-side) JWT payload
 /// purely to drive the UI -- e.g. showing initials and gating which panels
@@ -34,8 +44,10 @@ struct UnverifiedClaims {
     exp: i64,
 }
 
+#[derive(Clone)]
 struct Session {
     access_token: String,
+    refresh_token: Option<String>,
     claims: UnverifiedClaims,
 }
 
@@ -43,12 +55,20 @@ struct Session {
 /// initials avatar with a sign-out menu when logged in. Add one field of
 /// this type to your panel/app state, call [`LoginWidget::tick`] once per
 /// frame, and [`LoginWidget::ui`] wherever you want it drawn (e.g. a
-/// `TopBottomPanel`).
+/// `TopBottomPanel`). Use [`LoginWidget::ui_compact`] instead when this
+/// widget is embedded in a host (like the portal) that already shows the
+/// signed-in user elsewhere -- see that method's doc comment.
 #[derive(Default)]
 pub struct LoginWidget {
     config: Option<AuthConfig>,
     session: Option<Session>,
     checked_redirect: bool,
+    /// The `access_token` we last attempted (successfully or not) to
+    /// refresh away from, so a hard refresh failure (e.g. a revoked
+    /// refresh token) doesn't retry every single frame forever -- but a
+    /// *later*, different expired token (after a successful refresh, or a
+    /// fresh login) still gets its own attempt.
+    refresh_attempted_for: Option<String>,
     menu_open: bool,
     error: Option<String>,
 }
@@ -78,57 +98,88 @@ impl LoginWidget {
 
     /// Call once per frame (e.g. from `Panel::tick`). Finishes the
     /// redirect-back code exchange the first time it runs after a login
-    /// redirect, and restores a previously-stored session on first load.
+    /// redirect, restores a previously-stored session on first load, and
+    /// silently refreshes an expired access token in the background if a
+    /// refresh token is available (without this, a session left open past
+    /// the 15-minute access-token lifetime would look "signed in" one
+    /// moment and silently revert to "Sign in" the next, with no visible
+    /// cause).
     pub fn tick(&mut self, ctx: &egui::Context) {
-        if self.checked_redirect {
-            return;
-        }
         let Some(config) = self.config.clone() else {
             return;
         };
-        self.checked_redirect = true;
 
-        if self.session.is_none() {
-            self.session = restore_session();
-        }
+        if !self.checked_redirect {
+            self.checked_redirect = true;
 
-        if let Some((code, state)) = redirect_code_and_state() {
-            clear_query_params();
-            let expected_state = take_storage(STATE_KEY);
-            if expected_state.as_deref() != Some(state.as_str()) {
-                self.error = Some("login response had an unexpected state parameter".into());
-                return;
+            if self.session.is_none() {
+                self.session = restore_session(&config.client_id);
             }
-            let Some(verifier) = take_storage(VERIFIER_KEY) else {
-                self.error = Some("missing PKCE verifier (was sessionStorage cleared?)".into());
-                return;
-            };
-            let ctx = ctx.clone();
-            exchange_code(config, code, verifier, move |result| {
-                ctx.request_repaint();
-                match result {
-                    Ok(session) => {
-                        store_session(&session);
-                        SESSION_RESULT.with(|cell| *cell.borrow_mut() = Some(Ok(session)));
-                    }
-                    Err(err) => {
-                        SESSION_RESULT.with(|cell| *cell.borrow_mut() = Some(Err(err)));
-                    }
+
+            if let Some((code, state)) = redirect_code_and_state() {
+                clear_query_params();
+                let expected_state = take_storage(&storage_key(&config.client_id, "pkce_state"));
+                if expected_state.as_deref() != Some(state.as_str()) {
+                    self.error = Some("login response had an unexpected state parameter".into());
+                    return;
                 }
-            });
-        } else if let Some(error) = redirect_error() {
-            clear_query_params();
-            let was_silent = take_storage(SILENT_KEY).is_some();
-            if !was_silent {
-                self.error = Some(format!("sign-in failed: {error}"));
+                let Some(verifier) = take_storage(&storage_key(&config.client_id, "pkce_verifier"))
+                else {
+                    self.error = Some("missing PKCE verifier (was sessionStorage cleared?)".into());
+                    return;
+                };
+                let ctx2 = ctx.clone();
+                let client_id = config.client_id.clone();
+                exchange_code(config.clone(), code, verifier, move |result| {
+                    if let Ok(session) = &result {
+                        store_session(&client_id, session);
+                    }
+                    set_pending_result(&client_id, result);
+                    ctx2.request_repaint();
+                });
+            } else if let Some(error) = redirect_error() {
+                clear_query_params();
+                let was_silent =
+                    take_storage(&storage_key(&config.client_id, "silent_attempt")).is_some();
+                if !was_silent {
+                    self.error = Some(format!("sign-in failed: {error}"));
+                }
             }
         }
 
-        // Pick up a completed exchange from a previous frame's callback.
-        if let Some(result) = SESSION_RESULT.with(|cell| cell.borrow_mut().take()) {
+        // Pick up a completed exchange (or refresh, below) from a previous
+        // frame's callback.
+        if let Some(result) = take_pending_result(&config.client_id) {
             match result {
                 Ok(session) => self.session = Some(session),
                 Err(err) => self.error = Some(err),
+            }
+        }
+
+        // Silently refresh an expired access token if we have a refresh
+        // token stashed for it -- see this method's doc comment. Guarded by
+        // `refresh_attempted_for` so a hard failure (revoked refresh token)
+        // doesn't retry every frame forever, while still allowing a fresh
+        // attempt once the token that expired is a *different* one (a
+        // successful refresh, or a brand new login, since either replaces
+        // `access_token`).
+        if let Some(session) = self.session.clone() {
+            let already_expired = is_expired(&session.claims);
+            let already_attempted =
+                self.refresh_attempted_for.as_deref() == Some(&session.access_token);
+            if already_expired && !already_attempted {
+                self.refresh_attempted_for = Some(session.access_token.clone());
+                if let Some(refresh_token) = session.refresh_token {
+                    let ctx2 = ctx.clone();
+                    let client_id = config.client_id.clone();
+                    refresh_session(config, refresh_token, move |result| {
+                        if let Ok(session) = &result {
+                            store_session(&client_id, session);
+                        }
+                        set_pending_result(&client_id, result);
+                        ctx2.request_repaint();
+                    });
+                }
             }
         }
     }
@@ -177,7 +228,7 @@ impl LoginWidget {
     pub fn attempt_silent_sso(&self) {
         if self.session.is_none() {
             if let Some(config) = &self.config {
-                set_storage(SILENT_KEY, "1");
+                set_storage(&storage_key(&config.client_id, "silent_attempt"), "1");
                 navigate_to_authorize(config, true);
             }
         }
@@ -186,11 +237,17 @@ impl LoginWidget {
     pub fn sign_out(&mut self) {
         self.session = None;
         self.menu_open = false;
-        clear_storage("auth_session");
+        if let Some(config) = &self.config {
+            clear_storage(&storage_key(&config.client_id, "access_token"));
+            clear_storage(&storage_key(&config.client_id, "refresh_token"));
+        }
     }
 
     /// Draws the widget: a "Sign in" button, or an initials avatar + menu.
     /// Typically called inside a `egui::TopBottomPanel`/`egui::menu::bar`.
+    /// Use this for the *one* place per page that should show who's signed
+    /// in (e.g. the portal's own top bar) -- see [`ui_compact`](Self::ui_compact)
+    /// for every other embedded panel.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         if let Some(err) = self.error.clone() {
             ui.colored_label(egui::Color32::RED, &err);
@@ -239,6 +296,36 @@ impl LoginWidget {
             self.start_login();
         }
     }
+
+    /// Same sign-in/sign-out capability as [`ui`](Self::ui), but without
+    /// drawing the avatar/dropdown when already signed in -- for a tool's
+    /// panel embedded in a host (the portal) that already shows the
+    /// signed-in user somewhere else on the page. A "Sign in" button still
+    /// appears when this specific client_id's *own* session (separately
+    /// authenticated, per standard OIDC audience scoping -- see this
+    /// crate's docs) isn't established yet; once it is, this draws nothing
+    /// beyond a small text "Sign out" link, no circular avatar.
+    pub fn ui_compact(&mut self, ui: &mut egui::Ui) {
+        if let Some(err) = self.error.clone() {
+            ui.colored_label(egui::Color32::RED, &err);
+            if ui.small_button("dismiss").clicked() {
+                self.error = None;
+            }
+            return;
+        }
+
+        if self.config.is_none() {
+            return;
+        }
+
+        if self.is_authenticated() {
+            if ui.small_button("Sign out").clicked() {
+                self.sign_out();
+            }
+        } else if ui.button("Sign in").clicked() {
+            self.start_login();
+        }
+    }
 }
 
 fn initials_for(name: &str) -> String {
@@ -254,6 +341,37 @@ fn initials_for(name: &str) -> String {
 fn is_expired(claims: &UnverifiedClaims) -> bool {
     let now = (js_sys_now_secs()) as i64;
     claims.exp != 0 && claims.exp < now
+}
+
+/// Every `sessionStorage` key this module uses is scoped by `client_id` --
+/// see this module's doc comment for why an unscoped key is a real bug,
+/// not just a style preference.
+fn storage_key(client_id: &str, name: &str) -> String {
+    format!("auth:{client_id}:{name}")
+}
+
+// ── Per-client-id pending async results ──────────────────────────────────
+//
+// `ehttp::fetch`'s callback must be `Send` (even on wasm, where nothing is
+// actually multi-threaded), which rules out capturing something like `Rc`
+// directly. A thread-local keyed by `client_id` sidesteps that: only
+// `String`/`Result<Session, String>` (themselves `Send`) cross into the
+// closure, and the thread-local itself is read back out on the same
+// (only) thread from `tick`.
+
+thread_local! {
+    static PENDING_RESULTS: RefCell<HashMap<String, Result<Session, String>>> =
+        RefCell::new(HashMap::new());
+}
+
+fn set_pending_result(client_id: &str, result: Result<Session, String>) {
+    PENDING_RESULTS.with(|cell| {
+        cell.borrow_mut().insert(client_id.to_string(), result);
+    });
+}
+
+fn take_pending_result(client_id: &str) -> Option<Result<Session, String>> {
+    PENDING_RESULTS.with(|cell| cell.borrow_mut().remove(client_id))
 }
 
 // ── Browser plumbing ─────────────────────────────────────────────────────
@@ -277,6 +395,10 @@ fn take_storage(key: &str) -> Option<String> {
     let value = storage.get_item(key).ok().flatten();
     let _ = storage.remove_item(key);
     value
+}
+
+fn get_storage(key: &str) -> Option<String> {
+    session_storage()?.get_item(key).ok().flatten()
 }
 
 fn clear_storage(key: &str) {
@@ -349,8 +471,8 @@ fn navigate_to_authorize(config: &AuthConfig, silent: bool) {
     let verifier = random_url_safe_string(32);
     let challenge = pkce::challenge_from_verifier(&verifier);
     let state = random_url_safe_string(16);
-    set_storage(VERIFIER_KEY, &verifier);
-    set_storage(STATE_KEY, &state);
+    set_storage(&storage_key(&config.client_id, "pkce_verifier"), &verifier);
+    set_storage(&storage_key(&config.client_id, "pkce_state"), &state);
 
     let mut url = format!(
         "{}/oauth/authorize?response_type=code&client_id={}&redirect_uri={}&scope=openid+profile&state={}&code_challenge={}&code_challenge_method=S256",
@@ -388,11 +510,6 @@ struct TokenResponse {
     refresh_token: Option<String>,
 }
 
-thread_local! {
-    static SESSION_RESULT: std::cell::RefCell<Option<Result<Session, String>>> =
-        const { std::cell::RefCell::new(None) };
-}
-
 fn exchange_code(
     config: AuthConfig,
     code: String,
@@ -411,6 +528,32 @@ fn exchange_code(
         urlencoding_encode(&config.client_id),
         urlencoding_encode(&verifier),
     );
+    post_token_request(url, body, on_done);
+}
+
+/// Exchanges a refresh token for a fresh access token (and, if the IDP
+/// rotates it, a fresh refresh token) -- see `LoginWidget::tick`'s doc
+/// comment on why this needs to happen automatically rather than leaving
+/// an expired-but-refreshable session to just look silently signed out.
+fn refresh_session(
+    config: AuthConfig,
+    refresh_token: String,
+    on_done: impl FnOnce(Result<Session, String>) + Send + 'static,
+) {
+    let url = format!("{}/oauth/token", config.issuer_url.trim_end_matches('/'));
+    let body = format!(
+        "grant_type=refresh_token&refresh_token={}&client_id={}",
+        urlencoding_encode(&refresh_token),
+        urlencoding_encode(&config.client_id),
+    );
+    post_token_request(url, body, on_done);
+}
+
+fn post_token_request(
+    url: String,
+    body: String,
+    on_done: impl FnOnce(Result<Session, String>) + Send + 'static,
+) {
     let mut request = ehttp::Request::post(url, body.into_bytes());
     request.headers = ehttp::Headers::new(&[
         ("Content-Type", "application/x-www-form-urlencoded"),
@@ -425,11 +568,9 @@ fn exchange_code(
             let token: TokenResponse = serde_json::from_slice(&resp.bytes)
                 .map_err(|e| format!("decoding token response: {e}"))?;
             let claims = decode_claims_unverified(&token.access_token)?;
-            if let Some(refresh) = &token.refresh_token {
-                set_storage("auth_refresh_token", refresh);
-            }
             Ok(Session {
                 access_token: token.access_token,
+                refresh_token: token.refresh_token,
                 claims,
             })
         })();
@@ -449,21 +590,26 @@ fn decode_claims_unverified(token: &str) -> Result<UnverifiedClaims, String> {
     serde_json::from_slice(&bytes).map_err(|e| format!("parsing JWT claims: {e}"))
 }
 
-fn store_session(session: &Session) {
-    set_storage("auth_access_token", &session.access_token);
+fn store_session(client_id: &str, session: &Session) {
+    set_storage(
+        &storage_key(client_id, "access_token"),
+        &session.access_token,
+    );
+    if let Some(refresh) = &session.refresh_token {
+        set_storage(&storage_key(client_id, "refresh_token"), refresh);
+    }
 }
 
-fn restore_session() -> Option<Session> {
-    let token = session_storage()?
-        .get_item("auth_access_token")
-        .ok()
-        .flatten()?;
-    let claims = decode_claims_unverified(&token).ok()?;
-    if is_expired(&claims) {
-        return None;
-    }
+fn restore_session(client_id: &str) -> Option<Session> {
+    let access_token = get_storage(&storage_key(client_id, "access_token"))?;
+    let claims = decode_claims_unverified(&access_token).ok()?;
+    let refresh_token = get_storage(&storage_key(client_id, "refresh_token"));
+    // Deliberately not gated on `is_expired` here (unlike the old version):
+    // an expired-but-present session is still returned so `tick` can try a
+    // silent refresh using `refresh_token` instead of just forgetting it.
     Some(Session {
-        access_token: token,
+        access_token,
+        refresh_token,
         claims,
     })
 }

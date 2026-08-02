@@ -478,10 +478,18 @@ impl IdpPanel {
 
     fn admin_roles_and_access_ui(&mut self, ui: &mut egui::Ui) {
         ui.heading("Admin: Role grants & app login access");
+        if let Some(Err(err)) = self.admin_users.ready() {
+            ui.colored_label(egui::Color32::RED, format!("loading users: {err}"));
+            return;
+        }
+        if let Some(Err(err)) = self.admin_clients.ready() {
+            ui.colored_label(egui::Color32::RED, format!("loading apps: {err}"));
+            return;
+        }
         let (Some(Ok(users)), Some(Ok(clients))) =
             (self.admin_users.ready(), self.admin_clients.ready())
         else {
-            ui.label("Waiting for users/apps to load...");
+            ui.spinner();
             return;
         };
         let users = users.clone();

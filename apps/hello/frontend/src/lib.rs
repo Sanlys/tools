@@ -65,6 +65,16 @@ struct NewGreeting<'a> {
 
 pub struct HelloPanel {
     api_base_url: String,
+    /// `true` when hosted as a panel inside the portal, which already shows
+    /// the signed-in user elsewhere on the page -- suppresses this panel's
+    /// own avatar so it isn't duplicated per panel (`false` for both native
+    /// and standalone-wasm builds, where this is the only sign-in indicator
+    /// on the page at all). See `LoginWidget::ui_compact`'s doc comment.
+    /// Only consulted on wasm -- native has no `ui_compact` (there's no
+    /// portal top bar to defer to in a native standalone window either
+    /// way).
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    embedded: bool,
     status: JsonResource<HelloStatus>,
     name_input: String,
     last_error: Option<String>,
@@ -76,7 +86,11 @@ pub struct HelloPanel {
 }
 
 impl HelloPanel {
-    pub fn new(api_base_url: impl Into<String>) -> Self {
+    /// `embedded` should be `true` only when this panel is hosted inside
+    /// the portal (see `apps/portal/frontend/src/lib.rs::open_tool`) --
+    /// `false` for both the native and standalone-wasm builds below, which
+    /// have no other UI on the page to show the signed-in user.
+    pub fn new(api_base_url: impl Into<String>, embedded: bool) -> Self {
         let api_base_url = api_base_url.into();
 
         #[cfg(target_arch = "wasm32")]
@@ -92,6 +106,7 @@ impl HelloPanel {
         };
 
         Self {
+            embedded,
             status: JsonResource::new(),
             name_input: String::new(),
             last_error: None,
@@ -108,10 +123,18 @@ impl HelloPanel {
         format!("{}/api/status", self.api_base_url.trim_end_matches('/'))
     }
 
+    /// Requires being signed in -- `apps/hello/backend`'s `post_greeting`
+    /// now takes an `AuthUser` param (any authenticated user, no specific
+    /// role), so an unauthenticated request here would just get a 401
+    /// anyway; the `bearer_token` check keeps this from firing a doomed
+    /// request when the "Say hello" button should already be disabled.
     fn post_greeting(&mut self) {
         if self.name_input.trim().is_empty() {
             return;
         }
+        let Some(token) = self.login.bearer_token() else {
+            return;
+        };
         let url = format!("{}/api/greetings", self.api_base_url.trim_end_matches('/'));
         let body = match serde_json::to_vec(&NewGreeting {
             name: self.name_input.trim(),
@@ -126,6 +149,7 @@ impl HelloPanel {
         request.headers = ehttp::Headers::new(&[
             ("Accept", "application/json"),
             ("Content-Type", "application/json"),
+            ("Authorization", &format!("Bearer {token}")),
         ]);
         ehttp::fetch(request, |_response| {
             // Fire-and-forget: the next `tick()` re-fetches status, which
@@ -199,6 +223,13 @@ impl Panel for HelloPanel {
         ui.horizontal(|ui| {
             ui.heading("Hello");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                #[cfg(target_arch = "wasm32")]
+                if self.embedded {
+                    self.login.ui_compact(ui);
+                } else {
+                    self.login.ui(ui);
+                }
+                #[cfg(not(target_arch = "wasm32"))]
                 self.login.ui(ui);
             });
         });
@@ -208,13 +239,22 @@ impl Panel for HelloPanel {
         );
         ui.separator();
 
-        ui.horizontal(|ui| {
-            ui.label("Your name:");
-            ui.text_edit_singleline(&mut self.name_input);
-            if ui.button("Say hello").clicked() {
-                self.post_greeting();
-            }
-        });
+        if self.login.is_authenticated() {
+            ui.horizontal(|ui| {
+                ui.label("Your name:");
+                ui.text_edit_singleline(&mut self.name_input);
+                if ui.button("Say hello").clicked() {
+                    self.post_greeting();
+                }
+            });
+        } else {
+            ui.label(
+                egui::RichText::new(
+                    "Sign in above to say hello -- posting requires being signed in.",
+                )
+                .weak(),
+            );
+        }
 
         if let Some(err) = &self.last_error {
             ui.colored_label(egui::Color32::RED, err);
@@ -285,7 +325,7 @@ pub fn start() {
     tracing_wasm::set_as_global_default();
 
     wasm_bindgen_futures::spawn_local(async {
-        platform_core::standalone::run_web("the_canvas_id", HelloPanel::new(""))
+        platform_core::standalone::run_web("the_canvas_id", HelloPanel::new("", false))
             .await
             .expect("failed to start eframe");
     });
