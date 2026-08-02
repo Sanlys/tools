@@ -1,0 +1,23 @@
+[package]
+name = "game-mgr-client"
+# See apps/game-mgr/core/Cargo.toml's comment on mixed editions in this
+# workspace.
+edition = "2024"
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "game-mgr-client"
+path = "src/main.rs"
+
+[dependencies]
+eframe = { workspace = true }
+rfd = { workspace = true }
+game-mgr-api-types = { workspace = true }
+game-mgr-core = { workspace = true }
+semver = { workspace = true }
+serde_json = { workspace = true }
+time = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
