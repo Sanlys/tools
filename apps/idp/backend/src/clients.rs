@@ -21,6 +21,17 @@ pub struct ClientConfig {
     /// can't know its port in advance -- the OS assigns it at bind time).
     #[serde(default)]
     pub native: bool,
+    /// See `db::Client::roles_claim` -- which JWT claim name to emit this
+    /// client's roles under. Defaults to "roles".
+    #[serde(default = "default_roles_claim")]
+    pub roles_claim: String,
+    /// See `db::Client::access_restricted`.
+    #[serde(default)]
+    pub access_restricted: bool,
+}
+
+fn default_roles_claim() -> String {
+    "roles".to_string()
 }
 
 /// Reads `IDP_CLIENTS_JSON` (an inline JSON array, set by

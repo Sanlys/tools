@@ -1,9 +1,12 @@
 //! OIDC discovery + OAuth 2.0 authorization-code (with mandatory PKCE)
 //! endpoints. Every client is a *public* client (no `client_secret` --
 //! see docs/architecture.md), and there is no consent screen: every client
-//! is declared (trusted) in the IDP's own static registry (`clients.rs`),
+//! is trusted, whether declared in the IDP's static registry (`clients.rs`,
+//! `IDP_CLIENTS_JSON`) or created ad hoc through `/admin` (`db::create_client`),
 //! so a valid session goes straight from `/oauth/authorize` back to the
-//! relying party with a code, no extra approval click.
+//! relying party with a code, no extra approval click. A client with
+//! `access_restricted = true` still gates *which* users get that code at
+//! all -- see `issue_code_redirect`.
 
 use axum::{
     extract::{Form, Query, State},
@@ -158,8 +161,8 @@ async fn authorize_inner(
             Some(s) => {
                 issue_code_redirect(
                     app,
+                    &client,
                     &s.user_id,
-                    client_id,
                     redirect_uri,
                     &params,
                     scope,
@@ -196,8 +199,8 @@ async fn authorize_inner(
 
     issue_code_redirect(
         app,
+        &client,
         &session.user_id,
-        client_id,
         redirect_uri,
         &params,
         scope,
@@ -216,16 +219,25 @@ fn auth_error_redirect(redirect_uri: &str, error: &str, state: Option<&str>) -> 
 
 async fn issue_code_redirect(
     app: &AppState,
+    client: &db::Client,
     user_id: &str,
-    client_id: &str,
     redirect_uri: &str,
     params: &AuthorizeQuery,
     scope: &str,
     auth_time: i64,
 ) -> Result<Response, AppError> {
+    if client.access_restricted && !db::user_has_access(&app.db, user_id, &client.client_id).await?
+    {
+        return Ok(auth_error_redirect(
+            redirect_uri,
+            "access_denied",
+            params.state.as_deref(),
+        ));
+    }
+
     let code = db::create_authorization_code(
         &app.db,
-        client_id,
+        &client.client_id,
         user_id,
         redirect_uri,
         scope,
@@ -442,6 +454,15 @@ async fn issue_tokens(
     const ACCESS_TTL: i64 = 900; // 15 minutes
     const REFRESH_TTL_DAYS: i64 = 30;
 
+    let client = db::get_client(&app.db, client_id)
+        .await?
+        .ok_or_else(|| AppError::Unauthorized("invalid client".into()))?;
+    if client.access_restricted && !db::user_has_access(&app.db, &user.id, client_id).await? {
+        return Err(AppError::InvalidGrant(
+            "access to this app has been revoked".into(),
+        ));
+    }
+
     let roles = db::granted_roles(&app.db, &user.id, client_id).await?;
 
     let access_claims = Claims::new(
@@ -456,11 +477,7 @@ async fn issue_tokens(
         roles.clone(),
         None,
     );
-    let access_token = jsonwebtoken::encode(
-        &app.jwt_keys.signing_header(),
-        &access_claims,
-        &app.jwt_keys.encoding,
-    )?;
+    let access_token = encode_claims(app, &access_claims, &client.roles_claim)?;
 
     let id_token = if scope.split_whitespace().any(|s| s == "openid") {
         let id_claims = Claims::new(
@@ -475,11 +492,7 @@ async fn issue_tokens(
             roles,
             auth_time,
         );
-        Some(jsonwebtoken::encode(
-            &app.jwt_keys.signing_header(),
-            &id_claims,
-            &app.jwt_keys.encoding,
-        )?)
+        Some(encode_claims(app, &id_claims, &client.roles_claim)?)
     } else {
         None
     };
@@ -508,6 +521,32 @@ async fn issue_tokens(
         refresh_token: Some(refresh_token),
         scope: scope.to_string(),
     }))
+}
+
+/// Renames the `roles` field to `roles_claim` first if it's anything other
+/// than the default -- lets an external relying party (e.g. ArgoCD, which
+/// looks for group membership under a "groups" claim) consume the same
+/// per-client role grants without the IDP needing any app-specific
+/// knowledge beyond that one client's configured claim name.
+fn rename_roles_claim(claims: &Claims, roles_claim: &str) -> serde_json::Value {
+    let mut value = serde_json::to_value(claims).expect("Claims always serializes");
+    if roles_claim != "roles" {
+        if let Some(obj) = value.as_object_mut() {
+            if let Some(roles) = obj.remove("roles") {
+                obj.insert(roles_claim.to_string(), roles);
+            }
+        }
+    }
+    value
+}
+
+fn encode_claims(app: &AppState, claims: &Claims, roles_claim: &str) -> Result<String, AppError> {
+    let value = rename_roles_claim(claims, roles_claim);
+    Ok(jsonwebtoken::encode(
+        &app.jwt_keys.signing_header(),
+        &value,
+        &app.jwt_keys.encoding,
+    )?)
 }
 
 // ── Revocation endpoint (RFC 7009) ────────────────────────────────────────────
@@ -612,6 +651,44 @@ mod tests {
         let encoded = url_encode("https://example.com/callback?foo=bar&baz=qux");
         assert!(!encoded.contains('?'));
         assert!(!encoded.contains('&'));
+    }
+
+    #[test]
+    fn rename_roles_claim_leaves_default_untouched() {
+        let claims = Claims::new(
+            "https://idp.test",
+            "u",
+            "c",
+            3600,
+            None,
+            "u",
+            "U",
+            "openid",
+            vec!["admin".to_string()],
+            None,
+        );
+        let value = rename_roles_claim(&claims, "roles");
+        assert_eq!(value["roles"], serde_json::json!(["admin"]));
+        assert!(value.get("groups").is_none());
+    }
+
+    #[test]
+    fn rename_roles_claim_moves_to_custom_name() {
+        let claims = Claims::new(
+            "https://idp.test",
+            "u",
+            "c",
+            3600,
+            None,
+            "u",
+            "U",
+            "openid",
+            vec!["admin".to_string()],
+            None,
+        );
+        let value = rename_roles_claim(&claims, "groups");
+        assert_eq!(value["groups"], serde_json::json!(["admin"]));
+        assert!(value.get("roles").is_none());
     }
 
     #[test]

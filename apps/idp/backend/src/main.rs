@@ -156,10 +156,25 @@ async fn main() -> anyhow::Result<()> {
             "/api/admin/users/{id}/roles",
             get(routes::admin::list_roles_for_user),
         )
-        .route("/api/admin/clients", get(routes::admin::list_clients))
+        .route(
+            "/api/admin/clients",
+            get(routes::admin::list_clients).post(routes::admin::create_client),
+        )
+        .route(
+            "/api/admin/clients/{client_id}",
+            axum::routing::put(routes::admin::update_client).delete(routes::admin::delete_client),
+        )
         .route(
             "/api/admin/roles",
             post(routes::admin::grant_role).delete(routes::admin::revoke_role),
+        )
+        .route(
+            "/api/admin/access",
+            post(routes::admin::grant_access).delete(routes::admin::revoke_access),
+        )
+        .route(
+            "/api/admin/users/{id}/access",
+            get(routes::admin::list_access_for_user),
         )
         .route(
             "/api/admin/invites",

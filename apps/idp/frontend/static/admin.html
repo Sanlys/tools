@@ -31,9 +31,26 @@
   </div>
 
   <div class="card">
-    <h3>Apps &amp; declared roles</h3>
-    <p class="muted">Each app declares its own role vocabulary in <code>IDP_CLIENTS_JSON</code>.</p>
-    <table id="clients-table"><thead><tr><th>client_id</th><th>Name</th><th>Roles</th></tr></thead><tbody></tbody></table>
+    <h3>Apps</h3>
+    <p class="muted">Apps marked <code>static</code> are declared in <code>IDP_CLIENTS_JSON</code> (GitOps) and read-only here. Apps marked <code>dynamic</code> were created below and can be edited/deleted. Every client is a public PKCE-only client -- there is no client_secret, here or anywhere else in this IDP (see docs/architecture.md).</p>
+    <table id="clients-table"><thead><tr><th>client_id</th><th>Name</th><th>Roles</th><th>Roles claim</th><th>Restricted?</th><th>Source</th><th></th></tr></thead><tbody></tbody></table>
+  </div>
+
+  <div class="card">
+    <h3>Register a new app</h3>
+    <p class="muted">For an external OAuth client (e.g. ArgoCD) that isn't part of this repo. redirect_uris and roles are comma-separated. Leave roles_claim as "roles" unless the app expects a different claim name (e.g. ArgoCD's RBAC looks for "groups" by default).</p>
+    <label for="new-client-id">client_id</label>
+    <input id="new-client-id" type="text" placeholder="argocd" />
+    <label for="new-client-name">Name</label>
+    <input id="new-client-name" type="text" placeholder="ArgoCD" />
+    <label for="new-client-redirects">Redirect URIs</label>
+    <input id="new-client-redirects" type="text" placeholder="https://argocd.k8s.lysakermoen.com/auth/callback" />
+    <label for="new-client-roles">Declared roles</label>
+    <input id="new-client-roles" type="text" placeholder="admin, readonly" />
+    <label for="new-client-claim">Roles claim name</label>
+    <input id="new-client-claim" type="text" value="roles" />
+    <label><input id="new-client-restricted" type="checkbox" /> Restrict login to explicitly-granted users only</label>
+    <button id="create-client-btn">Create</button>
   </div>
 
   <div class="card">
@@ -48,6 +65,17 @@
 
     <h4 style="margin-top:1.5rem">Current grants for selected user</h4>
     <table id="grants-table"><thead><tr><th>App</th><th>Role</th><th></th></tr></thead><tbody></tbody></table>
+  </div>
+
+  <div class="card">
+    <h3>App login access (restricted apps only)</h3>
+    <p class="muted">Only matters for apps with "Restrict login" enabled above -- everyone else can already log into every unrestricted app. Uses the same "User" selection as the role grant section.</p>
+    <label for="access-client">App</label>
+    <select id="access-client"></select>
+    <button id="grant-access-btn">Allow selected user to log in</button>
+
+    <h4 style="margin-top:1.5rem">Apps the selected user may log into (restricted apps only)</h4>
+    <table id="access-table"><thead><tr><th>App</th><th></th></tr></thead><tbody></tbody></table>
   </div>
 </main>
 <script src="/api.js"></script>
@@ -113,11 +141,23 @@
   async function loadClients() {
     clients = await api('/api/admin/clients');
     document.querySelector('#clients-table tbody').innerHTML = clients
-      .map((c) => `<tr><td>${c.client_id}</td><td>${c.name}</td><td>${(c.roles || []).join(', ') || '-'}</td></tr>`)
+      .map((c) => `<tr><td>${c.client_id}</td><td>${c.name}</td><td>${(c.roles || []).join(', ') || '-'}</td><td>${c.roles_claim}</td><td>${c.access_restricted ? 'yes' : ''}</td><td>${c.managed ? 'dynamic' : 'static'}</td><td>${c.managed ? `<button class="secondary" onclick="deleteClient('${c.client_id}')">Delete</button>` : ''}</td></tr>`)
       .join('');
-    const select = document.getElementById('grant-client');
-    select.innerHTML = clients.map((c) => `<option value="${c.client_id}">${c.name}</option>`).join('');
+    const grantSelect = document.getElementById('grant-client');
+    grantSelect.innerHTML = clients.map((c) => `<option value="${c.client_id}">${c.name}</option>`).join('');
+    const accessSelect = document.getElementById('access-client');
+    accessSelect.innerHTML = clients.map((c) => `<option value="${c.client_id}">${c.name}${c.access_restricted ? '' : ' (unrestricted)'}</option>`).join('');
     updateRoleOptions();
+  }
+
+  async function deleteClient(clientId) {
+    if (!confirm(`Delete app "${clientId}"? Existing tokens for it stop working immediately.`)) return;
+    try {
+      await api('/api/admin/clients/' + encodeURIComponent(clientId), { method: 'DELETE' });
+      await loadClients();
+    } catch (err) {
+      showError(err);
+    }
   }
 
   function updateRoleOptions() {
@@ -144,10 +184,29 @@
     }
   }
 
+  async function loadAccess() {
+    const userId = document.getElementById('grant-user').value;
+    if (!userId) return;
+    const clientIds = await api('/api/admin/users/' + userId + '/access');
+    document.querySelector('#access-table tbody').innerHTML = clientIds
+      .map((cid) => `<tr><td>${clients.find((c) => c.client_id === cid)?.name || cid}</td><td><button class="secondary" onclick="revokeAccess('${userId}','${cid}')">Revoke</button></td></tr>`)
+      .join('') || '<tr><td class="muted" colspan="2">No explicit grants -- can only log into unrestricted apps.</td></tr>';
+  }
+
+  async function revokeAccess(userId, clientId) {
+    try {
+      await api(`/api/admin/access?user_id=${encodeURIComponent(userId)}&client_id=${encodeURIComponent(clientId)}`, { method: 'DELETE' });
+      await loadAccess();
+    } catch (err) {
+      showError(err);
+    }
+  }
+
   (async () => {
     if (!(await requireAdmin())) return;
     await Promise.all([loadUsers(), loadInvites(), loadClients()]);
     await loadGrants();
+    await loadAccess();
   })();
 
   document.getElementById('create-invite').addEventListener('click', async () => {
@@ -161,7 +220,10 @@
   });
 
   document.getElementById('grant-client').addEventListener('change', updateRoleOptions);
-  document.getElementById('grant-user').addEventListener('change', loadGrants);
+  document.getElementById('grant-user').addEventListener('change', () => {
+    loadGrants();
+    loadAccess();
+  });
 
   document.getElementById('grant-role-btn').addEventListener('click', async () => {
     const user_id = document.getElementById('grant-user').value;
@@ -171,6 +233,43 @@
     try {
       await api('/api/admin/roles', { method: 'POST', body: { user_id, client_id, role } });
       await loadGrants();
+    } catch (err) {
+      showError(err);
+    }
+  });
+
+  document.getElementById('grant-access-btn').addEventListener('click', async () => {
+    const user_id = document.getElementById('grant-user').value;
+    const client_id = document.getElementById('access-client').value;
+    if (!user_id || !client_id) return;
+    try {
+      await api('/api/admin/access', { method: 'POST', body: { user_id, client_id } });
+      await loadAccess();
+    } catch (err) {
+      showError(err);
+    }
+  });
+
+  document.getElementById('create-client-btn').addEventListener('click', async () => {
+    const client_id = document.getElementById('new-client-id').value.trim();
+    const name = document.getElementById('new-client-name').value.trim();
+    const redirect_uris = document.getElementById('new-client-redirects').value.split(',').map((s) => s.trim()).filter(Boolean);
+    const roles = document.getElementById('new-client-roles').value.split(',').map((s) => s.trim()).filter(Boolean);
+    const roles_claim = document.getElementById('new-client-claim').value.trim() || 'roles';
+    const access_restricted = document.getElementById('new-client-restricted').checked;
+    if (!client_id || !name || redirect_uris.length === 0) {
+      showError(new Error('client_id, name, and at least one redirect_uri are required'));
+      return;
+    }
+    try {
+      await api('/api/admin/clients', { method: 'POST', body: { client_id, name, redirect_uris, roles, roles_claim, access_restricted } });
+      document.getElementById('new-client-id').value = '';
+      document.getElementById('new-client-name').value = '';
+      document.getElementById('new-client-redirects').value = '';
+      document.getElementById('new-client-roles').value = '';
+      document.getElementById('new-client-claim').value = 'roles';
+      document.getElementById('new-client-restricted').checked = false;
+      await loadClients();
     } catch (err) {
       showError(err);
     }

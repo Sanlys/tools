@@ -43,6 +43,16 @@ pub struct Client {
     pub redirect_uris: Vec<String>,
     pub roles: Vec<String>,
     pub native: bool,
+    /// `false` for clients reconciled from `IDP_CLIENTS_JSON` (GitOps-owned,
+    /// read-only via the admin API); `true` for clients created through the
+    /// admin UI (DB-owned, never touched by `reconcile_clients`).
+    pub managed: bool,
+    /// JWT claim name this client's roles are emitted under -- see
+    /// migration 002's comment.
+    pub roles_claim: String,
+    /// If `true`, a user needs a `user_app_access` row to complete login
+    /// for this client at all (see migration 002's comment).
+    pub access_restricted: bool,
 }
 
 fn map_client(r: &sqlx::postgres::PgRow) -> Client {
@@ -54,6 +64,9 @@ fn map_client(r: &sqlx::postgres::PgRow) -> Client {
         redirect_uris: serde_json::from_str(&uris_json).unwrap_or_default(),
         roles: serde_json::from_str(&roles_json).unwrap_or_default(),
         native: r.get("native"),
+        managed: r.get("managed"),
+        roles_claim: r.get("roles_claim"),
+        access_restricted: r.get("access_restricted"),
     }
 }
 
@@ -192,6 +205,12 @@ pub async fn update_display_name(
 
 // ── Clients (reconciled from IDP_CLIENTS_JSON, see clients.rs) ────────────────
 
+const CLIENT_COLUMNS: &str =
+    "client_id, name, redirect_uris, roles, native, managed, roles_claim, access_restricted";
+
+/// Reconciles the GitOps-declared (`managed = FALSE`) clients only -- an
+/// admin-created (`managed = TRUE`) client is never inserted, updated, or
+/// deleted by this, no matter what `IDP_CLIENTS_JSON` says.
 pub async fn reconcile_clients(
     pool: &PgPool,
     configs: &[crate::clients::ClientConfig],
@@ -199,7 +218,7 @@ pub async fn reconcile_clients(
     let mut tx = pool.begin().await?;
 
     let ids: Vec<String> = configs.iter().map(|c| c.client_id.clone()).collect();
-    sqlx::query("DELETE FROM clients WHERE NOT (client_id = ANY($1))")
+    sqlx::query("DELETE FROM clients WHERE managed = FALSE AND NOT (client_id = ANY($1))")
         .bind(&ids)
         .execute(&mut *tx)
         .await?;
@@ -208,15 +227,19 @@ pub async fn reconcile_clients(
         let uris_json = serde_json::to_string(&c.redirect_uris).unwrap_or_default();
         let roles_json = serde_json::to_string(&c.roles).unwrap_or_default();
         sqlx::query(
-            "INSERT INTO clients (client_id, name, redirect_uris, roles, native) VALUES ($1, $2, $3, $4, $5) \
+            "INSERT INTO clients (client_id, name, redirect_uris, roles, native, managed, roles_claim, access_restricted) \
+             VALUES ($1, $2, $3, $4, $5, FALSE, $6, $7) \
              ON CONFLICT (client_id) DO UPDATE SET name = EXCLUDED.name, redirect_uris = EXCLUDED.redirect_uris, \
-             roles = EXCLUDED.roles, native = EXCLUDED.native",
+             roles = EXCLUDED.roles, native = EXCLUDED.native, managed = FALSE, \
+             roles_claim = EXCLUDED.roles_claim, access_restricted = EXCLUDED.access_restricted",
         )
         .bind(&c.client_id)
         .bind(&c.name)
         .bind(&uris_json)
         .bind(&roles_json)
         .bind(c.native)
+        .bind(&c.roles_claim)
+        .bind(c.access_restricted)
         .execute(&mut *tx)
         .await?;
     }
@@ -226,9 +249,9 @@ pub async fn reconcile_clients(
 }
 
 pub async fn get_client(pool: &PgPool, client_id: &str) -> Result<Option<Client>, AppError> {
-    let row = sqlx::query(
-        "SELECT client_id, name, redirect_uris, roles, native FROM clients WHERE client_id = $1",
-    )
+    let row = sqlx::query(&format!(
+        "SELECT {CLIENT_COLUMNS} FROM clients WHERE client_id = $1"
+    ))
     .bind(client_id)
     .fetch_optional(pool)
     .await?;
@@ -236,12 +259,136 @@ pub async fn get_client(pool: &PgPool, client_id: &str) -> Result<Option<Client>
 }
 
 pub async fn list_clients(pool: &PgPool) -> Result<Vec<Client>, AppError> {
-    let rows = sqlx::query(
-        "SELECT client_id, name, redirect_uris, roles, native FROM clients ORDER BY name ASC",
-    )
+    let rows = sqlx::query(&format!(
+        "SELECT {CLIENT_COLUMNS} FROM clients ORDER BY name ASC"
+    ))
     .fetch_all(pool)
     .await?;
     Ok(rows.iter().map(map_client).collect())
+}
+
+/// Fields an admin can set when creating/editing a DB-managed client
+/// through `/api/admin/clients`. Never includes `client_secret` -- every
+/// client here, admin-created or not, is a public PKCE-only client (see
+/// docs/architecture.md).
+#[derive(Debug, Clone)]
+pub struct ClientInput {
+    pub name: String,
+    pub redirect_uris: Vec<String>,
+    pub roles: Vec<String>,
+    pub native: bool,
+    pub roles_claim: String,
+    pub access_restricted: bool,
+}
+
+pub async fn create_client(
+    pool: &PgPool,
+    client_id: &str,
+    input: &ClientInput,
+) -> Result<(), AppError> {
+    if get_client(pool, client_id).await?.is_some() {
+        return Err(AppError::BadRequest(format!(
+            "client_id `{client_id}` already exists"
+        )));
+    }
+    let uris_json = serde_json::to_string(&input.redirect_uris).unwrap_or_default();
+    let roles_json = serde_json::to_string(&input.roles).unwrap_or_default();
+    sqlx::query(
+        "INSERT INTO clients (client_id, name, redirect_uris, roles, native, managed, roles_claim, access_restricted) \
+         VALUES ($1, $2, $3, $4, $5, TRUE, $6, $7)",
+    )
+    .bind(client_id)
+    .bind(&input.name)
+    .bind(&uris_json)
+    .bind(&roles_json)
+    .bind(input.native)
+    .bind(&input.roles_claim)
+    .bind(input.access_restricted)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Returns `false` if `client_id` doesn't exist or isn't admin-managed (a
+/// GitOps-declared client can't be edited through the admin API).
+pub async fn update_client(
+    pool: &PgPool,
+    client_id: &str,
+    input: &ClientInput,
+) -> Result<bool, AppError> {
+    let uris_json = serde_json::to_string(&input.redirect_uris).unwrap_or_default();
+    let roles_json = serde_json::to_string(&input.roles).unwrap_or_default();
+    let r = sqlx::query(
+        "UPDATE clients SET name = $1, redirect_uris = $2, roles = $3, native = $4, \
+         roles_claim = $5, access_restricted = $6 WHERE client_id = $7 AND managed = TRUE",
+    )
+    .bind(&input.name)
+    .bind(&uris_json)
+    .bind(&roles_json)
+    .bind(input.native)
+    .bind(&input.roles_claim)
+    .bind(input.access_restricted)
+    .bind(client_id)
+    .execute(pool)
+    .await?;
+    Ok(r.rows_affected() > 0)
+}
+
+/// Returns `false` if `client_id` doesn't exist or isn't admin-managed.
+pub async fn delete_client(pool: &PgPool, client_id: &str) -> Result<bool, AppError> {
+    let r = sqlx::query("DELETE FROM clients WHERE client_id = $1 AND managed = TRUE")
+        .bind(client_id)
+        .execute(pool)
+        .await?;
+    Ok(r.rows_affected() > 0)
+}
+
+// ── Per-app login access gate (independent of role grants) ───────────────────
+
+pub async fn user_has_access(
+    pool: &PgPool,
+    user_id: &str,
+    client_id: &str,
+) -> Result<bool, AppError> {
+    let row = sqlx::query(
+        "SELECT 1 AS present FROM user_app_access WHERE user_id = $1 AND client_id = $2",
+    )
+    .bind(user_id)
+    .bind(client_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.is_some())
+}
+
+pub async fn grant_access(pool: &PgPool, user_id: &str, client_id: &str) -> Result<(), AppError> {
+    sqlx::query(
+        "INSERT INTO user_app_access (user_id, client_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+    )
+    .bind(user_id)
+    .bind(client_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn revoke_access(pool: &PgPool, user_id: &str, client_id: &str) -> Result<(), AppError> {
+    sqlx::query("DELETE FROM user_app_access WHERE user_id = $1 AND client_id = $2")
+        .bind(user_id)
+        .bind(client_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn list_access_for_user(pool: &PgPool, user_id: &str) -> Result<Vec<String>, AppError> {
+    let rows = sqlx::query("SELECT client_id FROM user_app_access WHERE user_id = $1")
+        .bind(user_id)
+        .fetch_all(pool)
+        .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| r.get::<String, _>("client_id"))
+        .collect())
 }
 
 // ── Per-app role grants ───────────────────────────────────────────────────────
