@@ -5,7 +5,7 @@ nameOverride: "hello"
 fullnameOverride: ""
 image:
   repository: harbor.k8s.lysakermoen.com/tools/hello-backend
-  tag: "d37ef28a0a4ed9a2aa40533aafb61f89dd488709"
+  tag: "e2f91ce655cfbf72a7863db589c87288169fb82d"
   pullPolicy: IfNotPresent
 # Not needed as long as the `tools` Harbor project allows anonymous pull,
 # same as `library` does today (trilium-mcp pulls from it with no
