@@ -22,6 +22,14 @@ on:
     # GitOps bump), which only runs on the `main`-push side of this trigger
     # (see its `if:`).
     tags: ["v*"]
+  # Also fires when a GitHub Release is published through the web UI with
+  # a brand-new tag: creating a tag that way goes through the Releases API
+  # rather than a real `git push`, which does NOT emit the `push` event
+  # above -- so without this, "Draft a new release" silently never builds
+  # anything. `github.ref`/`github.ref_type` are the tag either way, so the
+  # `desktop` job's existing `if: github.ref_type == 'tag'` covers both.
+  release:
+    types: [published]
 
 permissions:
   contents: write
