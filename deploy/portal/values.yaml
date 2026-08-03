@@ -63,7 +63,7 @@ env:
           "description": "Ported from the standalone game-mgr repo: install/playtime/sync stats for a personal game library, egui panel + standalone.",
           "standalone_url": "https://games.lysakermoen.com",
           "api_base_url": "https://games.lysakermoen.com",
-          "health_path": "/healthz",
+          "health_path": "/health",
           "k8s_namespace": "tools-game-mgr",
           "k8s_deployment": "tools-game-mgr",
           "requires_role": null
