@@ -76,7 +76,12 @@ pub fn which(bin: &str) -> Option<PathBuf> {
 mod tests {
     use super::*;
 
+    // `sh` isn't a meaningful PATH lookup on Windows (no file literally
+    // named `sh`, and Git Bash's `sh.exe` wouldn't match this exact-name
+    // `which` anyway) -- caught by the rust-windows CI job actually running
+    // this test, not just compiling it.
     #[test]
+    #[cfg(unix)]
     fn which_finds_sh() {
         let found = which("sh").expect("sh should exist on any unix test machine");
         assert!(found.ends_with("sh"));
