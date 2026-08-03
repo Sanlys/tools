@@ -11,8 +11,8 @@ path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 
 [[bin]]
-name = "portal-native"
-path = "src/bin/native.rs"
+name = "portal-desktop"
+path = "src/bin/desktop.rs"
 
 [dependencies]
 platform-core.workspace = true

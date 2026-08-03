@@ -14,6 +14,19 @@ crate-type = ["cdylib", "rlib"]
 name = "{{project-name}}-standalone"
 path = "src/bin/standalone.rs"
 
+# On by default so this crate's own standalone wasm build gets its
+# `#[wasm_bindgen(start)]` entry point for free. If this tool ends up
+# embedded in apps/portal/frontend's own wasm bundle (see
+# docs/adding-a-tool.md's step 2), that crate must depend on this one with
+# `default-features = false` -- two crates in the same wasm module each
+# exporting their own wasm-bindgen `start` symbol is a linker error, and
+# the portal already has its own `start()`. See
+# apps/hello/frontend/Cargo.toml's identical comment for the reference
+# version of this same footgun.
+[features]
+default = ["standalone"]
+standalone = []
+
 [dependencies]
 platform-core.workspace = true
 platform-config.workspace = true

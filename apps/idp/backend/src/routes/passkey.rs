@@ -65,6 +65,25 @@ fn extract_ua(headers: &HeaderMap) -> Option<String> {
         .map(str::to_string)
 }
 
+/// Builds the first-party `session` cookie for `session_id`, with a
+/// `max_age` matching `db::SESSION_TTL_HOURS` -- without an explicit
+/// `max_age`, this would be a browser-session-only cookie (cleared on
+/// browser close) regardless of the server-side session's real 24h
+/// lifetime, which used to mean closing the browser forced a fresh passkey
+/// prompt far sooner than the session was actually still valid for. `secure`
+/// is derived from `base_url` rather than hardcoded `true` so this keeps
+/// working over plain `http://localhost:4000` in local dev (see
+/// docs/local-development.md's auth walkthrough).
+fn session_cookie(base_url: &str, session_id: String) -> Cookie<'static> {
+    Cookie::build(("session", session_id))
+        .http_only(true)
+        .same_site(SameSite::Lax)
+        .secure(base_url.starts_with("https"))
+        .max_age(time::Duration::hours(db::SESSION_TTL_HOURS))
+        .path("/")
+        .build()
+}
+
 // ── Registration ──────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -210,11 +229,7 @@ pub async fn register_finish(
     metrics::registered_users_gauge(user_count as f64);
     metrics::active_sessions(1.0);
 
-    let cookie = Cookie::build(("session", session.id))
-        .http_only(true)
-        .same_site(SameSite::Lax)
-        .path("/")
-        .build();
+    let cookie = session_cookie(&state.base_url, session.id);
     Ok((jar.add(cookie), Json(serde_json::json!({ "ok": true }))))
 }
 
@@ -367,11 +382,7 @@ pub async fn auth_finish(
     metrics::auth_attempt("success");
     metrics::active_sessions(1.0);
 
-    let cookie = Cookie::build(("session", session.id))
-        .http_only(true)
-        .same_site(SameSite::Lax)
-        .path("/")
-        .build();
+    let cookie = session_cookie(&state.base_url, session.id);
     Ok((
         jar.add(cookie),
         Json(serde_json::json!({ "ok": true, "username": user.username })),

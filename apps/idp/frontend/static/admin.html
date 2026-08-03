@@ -117,6 +117,14 @@
     try {
       await api('/api/admin/users/' + id, { method: 'DELETE' });
       await loadUsers();
+      // loadUsers() just replaced #grant-user's innerHTML, which silently
+      // re-selects whichever option the browser now puts first -- that
+      // does NOT fire a `change` event, so without this, the grants/access
+      // tables below keep showing whichever user was selected *before*
+      // the delete (possibly the user we just deleted) until an admin
+      // happens to reselect someone in the dropdown.
+      await loadGrants();
+      await loadAccess();
     } catch (err) {
       showError(err);
     }

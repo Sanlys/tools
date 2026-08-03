@@ -79,7 +79,7 @@ impl Panel for {{project-name | pascal_case}}Panel {
 /// this crate's `index.html`, talking to `{{project-name}}-backend` on the
 /// same origin that serves this bundle -- see `apps/hello/frontend/src/lib.rs`
 /// for the reference version of this same wiring.
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "standalone"))]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn start() {
     console_error_panic_hook::set_once();

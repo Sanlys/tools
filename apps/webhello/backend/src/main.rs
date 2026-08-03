@@ -33,7 +33,6 @@ use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
-use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
 
 #[derive(Clone)]
@@ -84,15 +83,21 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let (metrics_layer, metrics_router) = metrics_adapter::metrics_layer()?;
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
 
     let static_dir = std::env::var("STATIC_DIR").unwrap_or_else(|_| "./static".to_string());
     let index_html = format!("{static_dir}/index.html");
     let static_service = ServeDir::new(&static_dir).not_found_service(ServeFile::new(index_html));
 
+    // No CORS layer: unlike `hello-backend` (which the portal's wasm UI
+    // calls directly cross-origin, since `hello` has an embedded
+    // `ToolPanel::Hello`), `webhello` has no portal panel at all -- it
+    // only ever shows up as a link-out (see this module's doc comment),
+    // and every fetch `static/index.html` itself makes is same-origin. The
+    // only cross-context reader of this backend's `/health` is the
+    // portal-backend's own server-side `reqwest` call for the dashboard,
+    // which isn't subject to browser CORS in the first place. So a wide-open
+    // CORS layer here would just be needless attack-surface widening on a
+    // backend that reads/writes `hello`'s shared Postgres table.
     let app = Router::new()
         .route("/health", get(health))
         .route("/api/status", get(get_status))
@@ -100,7 +105,6 @@ async fn main() -> anyhow::Result<()> {
         .merge(metrics_router)
         .merge(auth_adapter::backend::config_route(auth.public_config()))
         .layer(metrics_layer)
-        .layer(cors)
         .with_state(state)
         .fallback_service(static_service);
 

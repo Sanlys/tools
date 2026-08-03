@@ -10,10 +10,21 @@ const REFRESH_INTERVAL_SECS: f64 = 10.0;
 /// for how that in turn feeds Prometheus/Grafana).
 #[derive(Default)]
 pub struct DashboardPanel {
+    /// See `HomePanel::api_base_url`'s doc comment -- same reasoning.
+    api_base_url: String,
     status: JsonResource<DashboardStatus>,
     last_value: Option<DashboardStatus>,
     last_error: Option<String>,
     last_fetch_at: Option<f64>,
+}
+
+impl DashboardPanel {
+    pub fn new(api_base_url: impl Into<String>) -> Self {
+        Self {
+            api_base_url: api_base_url.into(),
+            ..Self::default()
+        }
+    }
 }
 
 impl Panel for DashboardPanel {
@@ -32,7 +43,8 @@ impl Panel for DashboardPanel {
             Some(last) => now - last > REFRESH_INTERVAL_SECS,
         };
         if due && !self.status.is_loading() {
-            self.status.fetch("/api/status");
+            let url = format!("{}/api/status", self.api_base_url.trim_end_matches('/'));
+            self.status.fetch(&url);
             self.last_fetch_at = Some(now);
         }
         // Keep the UI ticking even when this panel isn't being interacted

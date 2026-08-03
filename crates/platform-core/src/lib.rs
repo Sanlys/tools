@@ -34,8 +34,23 @@ pub trait Panel {
     /// active/open one in the host (portal or standalone).
     fn ui(&mut self, ui: &mut egui::Ui);
 
-    /// Called once per frame regardless of visibility, for background work
-    /// such as polling a backend. Default is a no-op.
+    /// Called once per frame the panel is mounted in its host, independently
+    /// of whether [`ui`](Self::ui) also runs that frame -- for background
+    /// work such as polling a backend that should keep running even while
+    /// the user isn't looking at this panel's contents (e.g. it's one of
+    /// several open at once and a different one currently has focus). This
+    /// is `standalone::run`/`run_web`'s host loop's contract exactly: there
+    /// is only ever one panel, so it always ticks.
+    ///
+    /// The portal, which can host several panels at once each in its own
+    /// closable `egui::Window`, additionally pauses ticking a panel a user
+    /// has explicitly closed (not just defocused) -- see
+    /// `apps/portal/frontend/src/lib.rs`'s panel loop. That's a deliberate
+    /// choice by that particular host (no point polling a backend for a
+    /// panel nobody asked to see anymore), not a violation of this
+    /// contract: reopening the same panel resumes ticking it.
+    ///
+    /// Default is a no-op.
     fn tick(&mut self, ctx: &egui::Context) {
         let _ = ctx;
     }

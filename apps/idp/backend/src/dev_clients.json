@@ -2,9 +2,9 @@
   {
     "client_id": "portal",
     "name": "Tools Portal",
-    "redirect_uris": ["http://localhost:8080/"],
+    "redirect_uris": ["http://localhost:8080/", "http://127.0.0.1:0/callback"],
     "roles": [],
-    "native": false,
+    "native": true,
     "access_restricted": false
   },
   {
@@ -21,6 +21,14 @@
     "redirect_uris": ["http://localhost:8082/"],
     "roles": [],
     "native": false,
+    "access_restricted": false
+  },
+  {
+    "client_id": "game-mgr",
+    "name": "game-mgr",
+    "redirect_uris": ["http://localhost:8083/", "http://127.0.0.1:0/callback"],
+    "roles": [],
+    "native": true,
     "access_restricted": false
   }
 ]

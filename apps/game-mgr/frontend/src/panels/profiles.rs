@@ -86,12 +86,30 @@ impl GameMgrPanel {
                         if ui.button("Delete").clicked() {
                             self.confirm_delete = Some(p.id);
                         }
-                        if let Some(users) = users.as_ref().filter(|u| !u.is_empty()) {
+                        // Exclude the profile's own current owner: transferring
+                        // to yourself is a 422 from the backend anyway (see
+                        // apps/game-mgr/backend/src/api/profiles.rs), and
+                        // `self.mutate` is fire-and-forget, so previously
+                        // picking it (the default, or an explicit selection)
+                        // just silently did nothing visible.
+                        let candidates: Vec<_> = users
+                            .as_ref()
+                            .map(|users| {
+                                users
+                                    .iter()
+                                    .filter(|u| u.id != p.owner_user_id)
+                                    .collect::<Vec<_>>()
+                            })
+                            .unwrap_or_default();
+                        if !candidates.is_empty() {
                             let target = self
                                 .transfer_target
                                 .entry(p.id)
-                                .or_insert_with(|| users[0].id);
-                            let target_name = users
+                                .or_insert_with(|| candidates[0].id);
+                            if !candidates.iter().any(|u| u.id == *target) {
+                                *target = candidates[0].id;
+                            }
+                            let target_name = candidates
                                 .iter()
                                 .find(|u| u.id == *target)
                                 .and_then(|u| u.display_name.clone().or(Some(u.sub.clone())))
@@ -99,7 +117,7 @@ impl GameMgrPanel {
                             egui::ComboBox::from_id_salt(("transfer", p.id))
                                 .selected_text(target_name)
                                 .show_ui(ui, |ui| {
-                                    for u in users {
+                                    for u in &candidates {
                                         let label =
                                             u.display_name.clone().unwrap_or_else(|| u.sub.clone());
                                         ui.selectable_value(target, u.id, label);

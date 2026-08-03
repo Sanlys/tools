@@ -52,8 +52,14 @@ an id out of that list is what makes it link-out-only in the first place.
    - add a match arm in `PortalApp::open_tool`:
      `"my-tool" => ToolPanel::MyTool(my_tool_frontend::MyToolPanel::new(link.api_base_url.clone())),`
    - add `my-tool-frontend.workspace = true` to
-     `apps/portal/frontend/Cargo.toml`, and the same to the root
-     `Cargo.toml`'s `[workspace.dependencies]`.
+     `apps/portal/frontend/Cargo.toml`, and to the root `Cargo.toml`'s
+     `[workspace.dependencies]` add
+     `my-tool-frontend = { path = "apps/my-tool/frontend", default-features = false }`
+     -- the generated crate's `standalone` feature is on by default (its
+     own `#[wasm_bindgen(start)]`), which must be off when embedded in the
+     portal's own wasm bundle: two crates in the same wasm module each
+     exporting a `start` symbol is a linker error, and the portal already
+     has its own. See `hello-frontend`'s identical entry for reference.
 
 3. **Tool registry.** Add an entry to the `TOOLS_REGISTRY_JSON` block in
    `deploy/portal/values.yaml` (id must match the `link.id.as_str()` match

@@ -90,8 +90,23 @@ pub struct HelloPanel {
     #[cfg(target_arch = "wasm32")]
     portal_token: Option<String>,
     status: JsonResource<HelloStatus>,
+    /// The bearer token `status` was last fetched (or is currently being
+    /// fetched) with -- compared against `bearer_token()` each `tick` so a
+    /// sign-out/sign-in (or, embedded, the portal handing over a
+    /// *different* signed-in user's token) forces a refetch instead of
+    /// leaving stale data from the previous session on screen until the
+    /// user happens to trigger a write or click "Refresh".
+    last_status_token: Option<String>,
     name_input: String,
     last_error: Option<String>,
+    /// Set by `post_greeting`/`reset_greetings`'s `ehttp::fetch` callback
+    /// on a failed or non-2xx response, and drained into `last_error` on
+    /// the next `tick`. `ehttp::fetch`'s callback must be `Send` even on
+    /// wasm (see `crates/adapters/auth::frontend_web`'s identical
+    /// reasoning), which rules out a plain `Rc<RefCell<_>>` here -- an
+    /// `Arc<Mutex<_>>` satisfies that with no real contention risk, since
+    /// nothing here is actually multi-threaded.
+    action_error: std::sync::Arc<std::sync::Mutex<Option<String>>>,
     login: LoginWidget,
     #[cfg(target_arch = "wasm32")]
     auth_config: JsonResource<auth_adapter::AuthConfig>,
@@ -124,8 +139,10 @@ impl HelloPanel {
             #[cfg(target_arch = "wasm32")]
             portal_token: None,
             status: JsonResource::new(),
+            last_status_token: None,
             name_input: String::new(),
             last_error: None,
+            action_error: std::sync::Arc::new(std::sync::Mutex::new(None)),
             login,
             #[cfg(target_arch = "wasm32")]
             auth_config: JsonResource::new(),
@@ -208,9 +225,9 @@ impl HelloPanel {
             ("Content-Type", "application/json"),
             ("Authorization", &format!("Bearer {token}")),
         ]);
-        ehttp::fetch(request, |_response| {
-            // Fire-and-forget: the next `tick()` re-fetches status, which
-            // will reflect the write once the response lands.
+        let action_error = self.action_error.clone();
+        ehttp::fetch(request, move |response| {
+            report_action_failure(&action_error, "saying hello", response);
         });
         self.name_input.clear();
         // Force a fresh status fetch on the next tick rather than waiting
@@ -238,9 +255,35 @@ impl HelloPanel {
         let mut request = ehttp::Request::post(url, Vec::new());
         request.method = "DELETE".to_owned();
         request.headers = ehttp::Headers::new(&[("Authorization", &format!("Bearer {token}"))]);
-        ehttp::fetch(request, |_response| {});
+        let action_error = self.action_error.clone();
+        ehttp::fetch(request, move |response| {
+            report_action_failure(&action_error, "resetting greetings", response);
+        });
         self.status = JsonResource::new();
     }
+}
+
+/// Records a failed/non-2xx `ehttp` response into `action_error` (drained
+/// into `HelloPanel::last_error` on the next `tick`) -- without this,
+/// `post_greeting`/`reset_greetings` were pure fire-and-forget: a real
+/// failure (a 403 from missing the `operator` role, an expired token
+/// racing the click, a network blip) looked identical to success, since
+/// the next status refetch shows unchanged data either way with no
+/// indication of *why*.
+fn report_action_failure(
+    action_error: &std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    action: &str,
+    response: ehttp::Result<ehttp::Response>,
+) {
+    let error = match response {
+        Ok(resp) if resp.ok => return,
+        Ok(resp) => Some(format!(
+            "{action} failed: server returned {} {}",
+            resp.status, resp.status_text
+        )),
+        Err(err) => Some(format!("{action} failed: {err}")),
+    };
+    *action_error.lock().unwrap() = error;
 }
 
 impl Panel for HelloPanel {
@@ -253,6 +296,15 @@ impl Panel for HelloPanel {
     }
 
     fn tick(&mut self, ctx: &egui::Context) {
+        if let Some(err) = self.action_error.lock().unwrap().take() {
+            self.last_error = Some(err);
+        }
+
+        let current_token = self.bearer_token();
+        if current_token != self.last_status_token {
+            self.last_status_token = current_token;
+            self.status = JsonResource::new();
+        }
         if self.is_authenticated() && !self.status.has_requested() {
             self.fetch_status();
         }
@@ -280,7 +332,20 @@ impl Panel for HelloPanel {
             // prompt; if not, it's a no-op that just leaves the "Sign in"
             // button showing (see `LoginWidget::attempt_silent_sso`'s
             // doc-comment on the one-redirect-flash cost this trades off).
-            if !self.tried_silent_sso && !self.login.is_authenticated() {
+            //
+            // Gated on `self.login.config().is_some()`, not just
+            // `!tried_silent_sso`: `auth_config`'s fetch is async, so on the
+            // very first tick `login.set_config` hasn't run yet and
+            // `is_authenticated()` is `false` simply because there's no
+            // config at all, not because there's no session. Without this
+            // guard, that first tick would latch `tried_silent_sso` to
+            // `true` while `attempt_silent_sso` still silently no-ops on a
+            // `None` config (see that method's doc comment), permanently
+            // skipping the real attempt once the config actually loads.
+            if self.login.config().is_some()
+                && !self.tried_silent_sso
+                && !self.login.is_authenticated()
+            {
                 self.tried_silent_sso = true;
                 self.login.attempt_silent_sso();
             }

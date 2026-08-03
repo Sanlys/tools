@@ -49,8 +49,18 @@ templates/new-tool/   -- cargo-generate template scaffolding a new tool's app + 
 ## The unified app
 
 "The tools platform" is `apps/portal`: one egui app that compiles to a
-single wasm binary and is also runnable natively. It hosts three kinds of
-panel, all implementing the same `platform_core::Panel` trait:
+single wasm binary and is also shipped as `portal-desktop`, a native
+window build of the exact same `PortalApp` (`apps/portal/frontend/src/bin/desktop.rs`,
+released the same way `game-mgr-client` is -- see `.github/workflows/release.yml`'s
+`desktop` job). Unlike a tool's own standalone binary (which wraps a
+single `Panel` in `platform_core::standalone::run`), `portal-desktop`
+wraps the whole multi-panel `PortalApp` directly, since it's already an
+`eframe::App` in its own right hosting several panels at once. Signing in
+reuses the same "portal" client_id as the wasm build (`native: true` in
+`IDP_CLIENTS_JSON`, RFC 8252 loopback redirect via
+`auth_adapter::frontend_native`) rather than a separate desktop-only
+client -- one account, one session model, on either build. It hosts three
+kinds of panel, all implementing the same `platform_core::Panel` trait:
 
 - **Home** -- links out to every tool's standalone deployment (subdomain
   per tool). Every registered tool gets a working link here regardless of

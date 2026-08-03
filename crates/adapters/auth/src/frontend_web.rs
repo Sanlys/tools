@@ -9,17 +9,31 @@
 //! bundle small and means the exact same flow works for a hypothetical
 //! external, non-Rust OAuth client redirecting a browser at the same IDP.
 //!
-//! Every `sessionStorage` key here is namespaced by `client_id`
-//! (`storage_key`) -- the portal's own top-bar `LoginWidget` (client_id
-//! "portal") and an embedded tool's own `LoginWidget` (e.g. client_id
-//! "hello") run in the exact same browser tab/origin, so unscoped keys
-//! would have them silently clobber each other's session (whichever signed
-//! in most recently would win, and the other would show that session's
-//! claims/roles under the wrong audience). This was a real, previously
-//! unnoticed bug: `sign_out` also used to clear a key ("auth_session")
-//! that was never the one actually written, so "sign out" never forgot
-//! anything at all -- that plus the sharing bug together produced "sign
-//! out, refresh, still signed in" and "the wrong tool's roles show up".
+//! Every storage key here is namespaced by `client_id` (`storage_key`) --
+//! the portal's own top-bar `LoginWidget` (client_id "portal") and an
+//! embedded tool's own `LoginWidget` (e.g. client_id "hello") run in the
+//! exact same browser tab/origin, so unscoped keys would have them silently
+//! clobber each other's session (whichever signed in most recently would
+//! win, and the other would show that session's claims/roles under the
+//! wrong audience). This was a real, previously unnoticed bug: `sign_out`
+//! also used to clear a key ("auth_session") that was never the one
+//! actually written, so "sign out" never forgot anything at all -- that
+//! plus the sharing bug together produced "sign out, refresh, still signed
+//! in" and "the wrong tool's roles show up".
+//!
+//! Two different Web Storage backends are used deliberately, not just one:
+//! the access/refresh tokens live in `localStorage`, since the IDP issues a
+//! refresh token good for 30 days (`apps/idp/backend`'s `REFRESH_TTL_DAYS`)
+//! and the whole point of `tick`'s silent-refresh logic is that a session
+//! should survive well past a single tab's lifetime. `sessionStorage` (tied
+//! to one tab, cleared on close) previously held these too, which meant
+//! closing the tab -- or the whole browser -- silently discarded a
+//! perfectly valid 30-day refresh token, forcing a fresh passkey prompt far
+//! more often than the IDP's own token lifetimes ever intended. The PKCE
+//! verifier/state and the silent-SSO marker stay in `sessionStorage`: they
+//! only ever need to survive the one top-level redirect round trip to the
+//! IDP and back in the *same* tab, and letting them die with the tab (an
+//! abandoned login attempt) is the correct behavior, not a bug.
 
 use crate::{pkce, AuthConfig};
 use serde::Deserialize;
@@ -238,8 +252,8 @@ impl LoginWidget {
         self.session = None;
         self.menu_open = false;
         if let Some(config) = &self.config {
-            clear_storage(&storage_key(&config.client_id, "access_token"));
-            clear_storage(&storage_key(&config.client_id, "refresh_token"));
+            clear_local(&storage_key(&config.client_id, "access_token"));
+            clear_local(&storage_key(&config.client_id, "refresh_token"));
         }
     }
 
@@ -384,6 +398,13 @@ fn session_storage() -> Option<web_sys::Storage> {
     window()?.session_storage().ok()?
 }
 
+/// Backs the access/refresh tokens -- survives tab closes and browser
+/// restarts, matching the IDP's own 30-day refresh token lifetime. See this
+/// module's doc comment for why this differs from [`session_storage`].
+fn local_storage() -> Option<web_sys::Storage> {
+    window()?.local_storage().ok()?
+}
+
 fn set_storage(key: &str, value: &str) {
     if let Some(s) = session_storage() {
         let _ = s.set_item(key, value);
@@ -397,12 +418,18 @@ fn take_storage(key: &str) -> Option<String> {
     value
 }
 
-fn get_storage(key: &str) -> Option<String> {
-    session_storage()?.get_item(key).ok().flatten()
+fn set_local(key: &str, value: &str) {
+    if let Some(s) = local_storage() {
+        let _ = s.set_item(key, value);
+    }
 }
 
-fn clear_storage(key: &str) {
-    if let Some(s) = session_storage() {
+fn get_local(key: &str) -> Option<String> {
+    local_storage()?.get_item(key).ok().flatten()
+}
+
+fn clear_local(key: &str) {
+    if let Some(s) = local_storage() {
         let _ = s.remove_item(key);
     }
 }
@@ -591,19 +618,19 @@ fn decode_claims_unverified(token: &str) -> Result<UnverifiedClaims, String> {
 }
 
 fn store_session(client_id: &str, session: &Session) {
-    set_storage(
+    set_local(
         &storage_key(client_id, "access_token"),
         &session.access_token,
     );
     if let Some(refresh) = &session.refresh_token {
-        set_storage(&storage_key(client_id, "refresh_token"), refresh);
+        set_local(&storage_key(client_id, "refresh_token"), refresh);
     }
 }
 
 fn restore_session(client_id: &str) -> Option<Session> {
-    let access_token = get_storage(&storage_key(client_id, "access_token"))?;
+    let access_token = get_local(&storage_key(client_id, "access_token"))?;
     let claims = decode_claims_unverified(&access_token).ok()?;
-    let refresh_token = get_storage(&storage_key(client_id, "refresh_token"));
+    let refresh_token = get_local(&storage_key(client_id, "refresh_token"));
     // Deliberately not gated on `is_expired` here (unlike the old version):
     // an expired-but-present session is still returned so `tick` can try a
     // silent refresh using `refresh_token` instead of just forgetting it.

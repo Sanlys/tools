@@ -14,8 +14,11 @@ name="$1"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 
-cargo generate --path . --subfolder templates/new-tool/app --name "$name" --destination apps
-cargo generate --path . --subfolder templates/new-tool/deploy --name "$name" --destination deploy
+# The subfolder is a positional arg, not a --subfolder flag (that flag
+# doesn't exist in cargo-generate) -- see docs/adding-a-tool.md's manual
+# invocation, which this mirrors.
+cargo generate --path . templates/new-tool/app --name "$name" --destination apps
+cargo generate --path . templates/new-tool/deploy --name "$name" --destination deploy
 
 cat <<EOF
 

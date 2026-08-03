@@ -20,6 +20,11 @@ use platform_config::{JsonResource, ToolLink, ToolRegistry};
 use platform_core::{Panel, PanelId};
 use std::collections::BTreeMap;
 
+#[cfg(not(target_arch = "wasm32"))]
+use auth_adapter::frontend_native::LoginWidget;
+#[cfg(target_arch = "wasm32")]
+use auth_adapter::frontend_web::LoginWidget;
+
 /// The closed, compile-time-known set of panels the unified app can host.
 /// Adding a tool means: add a variant here, add it to the `dispatch!` match
 /// list right below, and add a match arm in [`PortalApp::open_tool`]. See
@@ -33,12 +38,13 @@ pub enum ToolPanel {
     // `large_enum_variant` flags -- boxing keeps `ToolPanel` itself small
     // regardless of how large any one tool's panel state gets.
     GameMgr(Box<game_mgr_frontend::GameMgrPanel>),
-    /// Wasm-only: this panel calls the IDP's own API directly using the
-    /// portal's bearer token (see `panels::idp`'s doc comment) -- the
-    /// native portal binary has no sign-in UI at all today, so there's
-    /// nothing for it to authenticate with.
-    #[cfg(target_arch = "wasm32")]
-    Idp(panels::IdpPanel),
+    /// This panel calls the IDP's own API directly using the portal's own
+    /// bearer token (see `panels::idp`'s doc comment) -- works identically
+    /// on native and wasm since both platforms now carry a portal-scoped
+    /// `LoginWidget` (see `PortalApp::login`). Boxed for the same reason
+    /// as `GameMgr` above: `IdpPanel` carries several `JsonResource`s and
+    /// clippy's `large_enum_variant` flags it otherwise.
+    Idp(Box<panels::IdpPanel>),
 }
 
 /// Delegates a `Panel` method call to whichever variant is active. Kept as
@@ -52,7 +58,6 @@ macro_rules! dispatch {
             ToolPanel::Dashboard($panel) => $body,
             ToolPanel::Hello($panel) => $body,
             ToolPanel::GameMgr($panel) => $body,
-            #[cfg(target_arch = "wasm32")]
             ToolPanel::Idp($panel) => $body,
         }
     };
@@ -82,48 +87,73 @@ struct OpenPanel {
 }
 
 pub struct PortalApp {
+    /// This build's own backend to talk to: empty (same-origin relative
+    /// paths) for the wasm build served by `apps/portal/backend` itself,
+    /// or an absolute URL for the native desktop build, which has no page
+    /// origin to resolve a relative path against -- see
+    /// [`PortalApp::new`]/`src/bin/desktop.rs`.
+    api_base_url: String,
     registry: JsonResource<ToolRegistry>,
     open: BTreeMap<String, OpenPanel>,
     /// The portal's *own* sign-in state (client_id "portal") -- this only
-    /// gates portal-native features, if any exist later. It can't gate
-    /// other tools' panels: a token minted for "portal" carries no roles
-    /// for "hello" or any other app's own client_id (standard OIDC
-    /// audience scoping). Each tool's own panel manages its own login
-    /// independently -- see `hello_frontend::HelloPanel` for that pattern.
-    /// wasm-only for now: a native portal binary is a minor/dev-only path,
-    /// so it simply runs without a sign-in UI.
+    /// gates portal-native features (and the "Account" panel below). It
+    /// can't gate other tools' panels: a token minted for "portal" carries
+    /// no roles for "hello" or any other app's own client_id (standard
+    /// OIDC audience scoping). Each tool's own standalone panel manages
+    /// its own login independently -- see `hello_frontend::HelloPanel` for
+    /// that pattern.
     #[cfg(target_arch = "wasm32")]
     auth_config: JsonResource<auth_adapter::AuthConfig>,
-    #[cfg(target_arch = "wasm32")]
-    login: auth_adapter::frontend_web::LoginWidget,
+    login: LoginWidget,
 }
 
-impl Default for PortalApp {
-    fn default() -> Self {
+impl PortalApp {
+    /// `api_base_url` is this build's own backend (`apps/portal/backend`)
+    /// -- pass `""` for the wasm build (served by that same backend, so
+    /// every path resolves same-origin), or an absolute URL for the native
+    /// desktop build. See `src/bin/desktop.rs`.
+    pub fn new(api_base_url: impl Into<String>) -> Self {
+        let api_base_url = api_base_url.into();
+
+        #[cfg(not(target_arch = "wasm32"))]
+        let login = match auth_adapter::frontend_native::fetch_auth_config(&api_base_url) {
+            Ok(cfg) => LoginWidget::new(cfg),
+            Err(err) => {
+                let msg = format!("could not fetch auth config from {api_base_url}: {err}");
+                tracing::error!("portal-desktop: {msg}");
+                LoginWidget::with_config_error(msg)
+            }
+        };
+        #[cfg(target_arch = "wasm32")]
+        let login = LoginWidget::new();
+
         let mut app = Self {
             registry: JsonResource::new(),
             open: BTreeMap::new(),
             #[cfg(target_arch = "wasm32")]
             auth_config: JsonResource::new(),
-            #[cfg(target_arch = "wasm32")]
-            login: auth_adapter::frontend_web::LoginWidget::new(),
+            login,
+            api_base_url,
         };
         app.open_builtin("home");
         app
     }
-}
 
-impl PortalApp {
+    fn url(&self, path: &str) -> String {
+        format!("{}{path}", self.api_base_url.trim_end_matches('/'))
+    }
+
     fn open_builtin(&mut self, id: &str) {
         if let Some(existing) = self.open.get_mut(id) {
             existing.visible = true;
             return;
         }
         let panel: Option<ToolPanel> = match id {
-            "home" => Some(ToolPanel::Home(HomePanel::default())),
-            "dashboard" => Some(ToolPanel::Dashboard(DashboardPanel::default())),
-            #[cfg(target_arch = "wasm32")]
-            "idp" => Some(ToolPanel::Idp(panels::IdpPanel::new())),
+            "home" => Some(ToolPanel::Home(HomePanel::new(self.api_base_url.clone()))),
+            "dashboard" => Some(ToolPanel::Dashboard(DashboardPanel::new(
+                self.api_base_url.clone(),
+            ))),
+            "idp" => Some(ToolPanel::Idp(Box::new(panels::IdpPanel::new()))),
             _ => None,
         };
         if let Some(panel) = panel {
@@ -187,21 +217,22 @@ impl PortalApp {
 impl eframe::App for PortalApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if !self.registry.has_requested() {
-            self.registry.fetch("/config/tools.json");
+            let url = self.url("/config/tools.json");
+            self.registry.fetch(&url);
         }
 
         #[cfg(target_arch = "wasm32")]
         {
             if !self.auth_config.has_requested() {
-                self.auth_config.fetch("/config/auth.json");
+                let url = self.url("/config/auth.json");
+                self.auth_config.fetch(&url);
             }
             if let Some(Ok(cfg)) = self.auth_config.ready() {
                 self.login.set_config(cfg.clone());
             }
-            self.login.tick(ctx);
         }
+        self.login.tick(ctx);
 
-        #[cfg(target_arch = "wasm32")]
         egui::TopBottomPanel::top("auth_bar").show(ctx, |ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 self.login.ui(ui);
@@ -219,7 +250,6 @@ impl eframe::App for PortalApp {
                 if ui.button("Dashboard").clicked() {
                     self.open_builtin("dashboard");
                 }
-                #[cfg(target_arch = "wasm32")]
                 if ui.button("Account").clicked() {
                     self.open_builtin("idp");
                 }
@@ -276,7 +306,6 @@ impl eframe::App for PortalApp {
             if !open_panel.visible {
                 continue;
             }
-            #[cfg(target_arch = "wasm32")]
             match &mut open_panel.panel {
                 ToolPanel::Idp(idp) => {
                     idp.set_auth(
@@ -284,9 +313,16 @@ impl eframe::App for PortalApp {
                         self.login.config().map(|c| c.issuer_url.clone()),
                     );
                 }
+                // wasm-only: on native, an embedded Hello/GameMgr panel
+                // has no portal token to borrow in the first place -- see
+                // each panel's own `embedded` field doc comment. It runs
+                // its own separate native login instead, same as its
+                // standalone build.
+                #[cfg(target_arch = "wasm32")]
                 ToolPanel::Hello(hello) => {
                     hello.set_portal_token(self.login.bearer_token());
                 }
+                #[cfg(target_arch = "wasm32")]
                 ToolPanel::GameMgr(game_mgr) => {
                     game_mgr.set_portal_token(self.login.bearer_token());
                 }
@@ -337,7 +373,7 @@ pub fn start() {
             .start(
                 canvas,
                 eframe::WebOptions::default(),
-                Box::new(|_cc| Ok(Box::new(PortalApp::default()))),
+                Box::new(|_cc| Ok(Box::new(PortalApp::new("")))),
             )
             .await
             .expect("failed to start eframe");

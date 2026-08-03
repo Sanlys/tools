@@ -1,6 +1,6 @@
 //! Machines tab: registration/liveness (`GET /machines`). No sync-folder
-//! health here -- see `crate`'s module doc on why: the API only has a write
-//! side for that (`PUT /machines/{id}/sync-status`), nothing to read back.
+//! health here -- see `crate`'s module doc on why: neither a write nor a
+//! read route for that exists yet on the backend.
 
 use super::format_relative;
 use crate::GameMgrPanel;
@@ -45,8 +45,8 @@ impl GameMgrPanel {
         ui.add_space(8.0);
         ui.label(
             egui::RichText::new(
-                "Per-folder sync health isn't queryable from the API yet -- \
-                 PUT /machines/{id}/sync-status is ingest-only today.",
+                "Per-folder sync health isn't wired up on the backend yet -- \
+                 there's no route to report or query it.",
             )
             .weak()
             .italics(),

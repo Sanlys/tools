@@ -1,6 +1,9 @@
 //! Native client auth (PLAN.md §6.5): authorization code + PKCE with a
-//! loopback redirect, refresh-token storage at 0600. A `StaticToken`
-//! provider covers tests/dev against a fake-auth server (PLAN.md §15).
+//! loopback redirect, refresh-token storage at 0600. `StaticToken` is a
+//! test-only fixture for a mock server that doesn't verify tokens; against
+//! the real deployed backend, an unconfigured client uses `NotConfigured`
+//! instead, which fails loudly rather than authenticating with a token the
+//! real server can never accept.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -20,8 +23,12 @@ pub trait TokenProvider: Send + Sync {
     fn describe(&self) -> String;
 }
 
-/// Dev/test provider: fixed token, accepted by a fake-auth server (which
-/// ignores the token entirely).
+/// Test-only provider: fixed token, for constructing a `ServerClient` in a
+/// test against a local mock server that doesn't verify tokens at all --
+/// see this crate's own `stats`/`s3`/`scan` test modules. Never wired up
+/// against the real deployed backend: `apps/game-mgr/backend` always
+/// verifies a real RS256 JWT (`auth_adapter::backend::AuthUser`) and has no
+/// "accept any token" mode to pair with this.
 pub struct StaticToken(pub String);
 
 #[async_trait::async_trait]
@@ -31,7 +38,32 @@ impl TokenProvider for StaticToken {
     }
 
     fn describe(&self) -> String {
-        "static dev token (server must run GM_AUTH_MODE=fake)".into()
+        "static test token (only valid against a mock server)".into()
+    }
+}
+
+/// Returned by `provider_from_config` when `oidc_issuer`/`oidc_native_client_id`
+/// aren't set. Errors loudly the moment anything actually tries to
+/// authenticate, rather than the previous behavior: silently handing out
+/// `StaticToken`'s fixed "dev-token", which the real backend has no way to
+/// accept (there is no "fake auth" mode anywhere in
+/// `apps/game-mgr/backend` -- see that crate's `tests/common/mod.rs`,
+/// which documents this repo has no such escape hatch at all). That used
+/// to mean an unconfigured client looked "signed in" (`describe()` gave no
+/// hint anything was wrong) while every real API call silently 401'd.
+struct NotConfigured;
+
+#[async_trait::async_trait]
+impl TokenProvider for NotConfigured {
+    async fn bearer(&self) -> Result<String> {
+        bail!(
+            "no OIDC issuer configured -- set oidc_issuer and oidc_native_client_id \
+             in config.toml (or GM_OIDC_ISSUER/GM_OIDC_NATIVE_CLIENT_ID) before signing in"
+        )
+    }
+
+    fn describe(&self) -> String {
+        "not signed in -- no OIDC issuer configured".into()
     }
 }
 
@@ -70,7 +102,7 @@ pub fn pkce_challenge(verifier: &str) -> String {
 }
 
 /// Parse `code` and `state` out of the loopback redirect's request line,
-/// e.g. `GET /cb?code=abc&state=xyz HTTP/1.1`.
+/// e.g. `GET /callback?code=abc&state=xyz HTTP/1.1`.
 pub fn parse_redirect(request_line: &str) -> Result<(String, String)> {
     let path = request_line
         .split_whitespace()
@@ -170,7 +202,14 @@ impl OidcPkce {
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         let port = listener.local_addr()?.port();
-        let redirect_uri = format!("http://127.0.0.1:{port}/cb");
+        // Must match the path declared for the "game-mgr" client in
+        // deploy/idp/values.yaml's IDP_CLIENTS_JSON ("/callback") --
+        // `clients::redirect_uri_allowed` matches a native client's
+        // loopback redirect by path only (port is deliberately ignored,
+        // since the OS assigns it at bind time), so a mismatched path
+        // here made every login attempt fail with `redirect_uri not
+        // allowed for this client` before a code was ever issued.
+        let redirect_uri = format!("http://127.0.0.1:{port}/callback");
 
         let mut auth_url = reqwest::Url::parse(&discovery.authorization_endpoint)?;
         auth_url
@@ -306,13 +345,11 @@ pub fn provider_from_config(config: &crate::config::ClientConfig) -> Arc<dyn Tok
             crate::paths::auth_token_file(),
         )),
         _ => {
-            let token =
-                std::env::var("GM_CLIENT_TOKEN").unwrap_or_else(|_| "dev-token".to_string());
             tracing::warn!(
-                "no OIDC issuer configured — using a static dev token \
-                 (server must run GM_AUTH_MODE=fake)"
+                "no OIDC issuer configured -- set oidc_issuer/oidc_native_client_id in \
+                 config.toml; every authenticated request will fail until then"
             );
-            Arc::new(StaticToken(token))
+            Arc::new(NotConfigured)
         }
     }
 }

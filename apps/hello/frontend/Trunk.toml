@@ -16,6 +16,9 @@ open = false
 backend = "http://127.0.0.1:8081/api"
 
 [[proxy]]
+backend = "http://127.0.0.1:8081/config"
+
+[[proxy]]
 backend = "http://127.0.0.1:8081/health"
 
 [[proxy]]

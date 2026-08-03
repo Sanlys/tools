@@ -91,6 +91,18 @@ pub struct IdpPanel {
     sessions: JsonResource<Vec<SessionInfo>>,
     display_name_input: String,
     action_error: Option<String>,
+    /// Set by `post_json`/`delete`'s `ehttp::fetch` callback on a failed or
+    /// non-2xx response, and drained into `action_error` on the next
+    /// `tick`. Every mutation in this panel used to be pure
+    /// fire-and-forget (the response was never inspected at all), so a
+    /// failed save/grant/delete -- a 403 from `require_admin`, a 400 from
+    /// a validation error, a network blip -- looked identical to success:
+    /// the JSON resource reset right after firing the request made the
+    /// next `tick` refetch unchanged data, with nothing telling the admin
+    /// *why* nothing changed. `Arc<Mutex<_>>` rather than `Rc<RefCell<_>>`
+    /// since `ehttp::fetch`'s callback must be `Send` even on wasm (see
+    /// `crates/adapters/auth::frontend_web`'s identical reasoning).
+    pending_error: std::sync::Arc<std::sync::Mutex<Option<String>>>,
 
     admin_users: JsonResource<Vec<AdminUser>>,
     admin_clients: JsonResource<Vec<AdminClient>>,
@@ -121,6 +133,7 @@ impl Default for IdpPanel {
             sessions: JsonResource::new(),
             display_name_input: String::new(),
             action_error: None,
+            pending_error: std::sync::Arc::new(std::sync::Mutex::new(None)),
             admin_users: JsonResource::new(),
             admin_clients: JsonResource::new(),
             admin_invites: JsonResource::new(),
@@ -181,7 +194,11 @@ impl IdpPanel {
             ("Authorization", &format!("Bearer {token}")),
             ("Content-Type", "application/json"),
         ]);
-        ehttp::fetch(request, |_| {});
+        let pending_error = self.pending_error.clone();
+        let path = path.to_string();
+        ehttp::fetch(request, move |response| {
+            report_mutation_failure(&pending_error, &path, response);
+        });
     }
 
     fn delete(&self, path: &str) {
@@ -191,7 +208,11 @@ impl IdpPanel {
         let mut request = ehttp::Request::post(format!("{base}{path}"), Vec::new());
         request.method = "DELETE".to_owned();
         request.headers = ehttp::Headers::new(&[("Authorization", &format!("Bearer {token}"))]);
-        ehttp::fetch(request, |_| {});
+        let pending_error = self.pending_error.clone();
+        let path = path.to_string();
+        ehttp::fetch(request, move |response| {
+            report_mutation_failure(&pending_error, &path, response);
+        });
     }
 
     fn profile_ui(&mut self, ui: &mut egui::Ui) {
@@ -317,6 +338,16 @@ impl IdpPanel {
                             if ui.small_button("Delete").clicked() {
                                 self.delete(&format!("/api/admin/users/{}", u.id));
                                 self.admin_users = JsonResource::new();
+                                // Otherwise the "Role grants & app login
+                                // access" section below keeps showing this
+                                // now-deleted user's stale cached grants
+                                // until an admin happens to reselect
+                                // someone in the dropdown.
+                                if self.selected_user_id == u.id {
+                                    self.selected_user_id.clear();
+                                    self.role_grants_for_user = JsonResource::new();
+                                    self.access_for_user = JsonResource::new();
+                                }
                             }
                             ui.end_row();
                         }
@@ -650,6 +681,26 @@ fn fetch_authed<T: serde::de::DeserializeOwned + Send + 'static>(
     resource.fetch_with_headers(&format!("{base}{path}"), &[("Authorization", &auth)]);
 }
 
+/// Records a failed/non-2xx `ehttp` response from `post_json`/`delete` into
+/// `pending_error` (drained into `IdpPanel::action_error` on the next
+/// `tick`) -- see `IdpPanel::pending_error`'s doc comment on why this
+/// panel's mutations need it at all.
+fn report_mutation_failure(
+    pending_error: &std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    path: &str,
+    response: ehttp::Result<ehttp::Response>,
+) {
+    let error = match response {
+        Ok(resp) if resp.ok => return,
+        Ok(resp) => Some(format!(
+            "{path} failed: server returned {} {}",
+            resp.status, resp.status_text
+        )),
+        Err(err) => Some(format!("{path} failed: {err}")),
+    };
+    *pending_error.lock().unwrap() = error;
+}
+
 fn url_encode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for byte in s.bytes() {
@@ -673,6 +724,10 @@ impl Panel for IdpPanel {
     }
 
     fn tick(&mut self, _ctx: &egui::Context) {
+        if let Some(err) = self.pending_error.lock().unwrap().take() {
+            self.action_error = Some(err);
+        }
+
         let (Some(base), Some(token)) = (self.base(), self.bearer_token.clone()) else {
             return;
         };

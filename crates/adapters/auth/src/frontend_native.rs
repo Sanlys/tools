@@ -117,6 +117,20 @@ impl LoginWidget {
         keyring::Entry::new(KEYRING_SERVICE, &self.config.client_id).ok()
     }
 
+    /// The runtime auth config, once known -- mirrors
+    /// `frontend_web::LoginWidget::config`'s signature (`None` there means
+    /// "hasn't loaded yet"; here it means "failed to load", since native
+    /// construction is synchronous) so a host that embeds this widget (e.g.
+    /// the portal's own top bar) can read `issuer_url` the same way on
+    /// either platform without a `cfg`-gated branch of its own.
+    pub fn config(&self) -> Option<&AuthConfig> {
+        if self.config_error.is_some() {
+            None
+        } else {
+            Some(&self.config)
+        }
+    }
+
     /// Call once per frame. On first call, tries to silently restore a
     /// session from a refresh token in the OS keyring (left by a previous
     /// run); otherwise a no-op until [`LoginWidget::start_login`] is
