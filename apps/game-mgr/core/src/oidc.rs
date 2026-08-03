@@ -21,6 +21,27 @@ pub trait TokenProvider: Send + Sync {
     /// A bearer token ready to attach, refreshing if needed.
     async fn bearer(&self) -> Result<String>;
     fn describe(&self) -> String;
+
+    /// Run an interactive login (open the system browser, catch the
+    /// loopback redirect) if this provider supports one. Named
+    /// differently from `OidcPkce`'s own inherent `login` (rather than
+    /// overriding a same-named trait method) purely to avoid any reader
+    /// wondering whether `self.login()` inside that impl recurses.
+    ///
+    /// Default: unsupported. Only `OidcPkce` overrides this --
+    /// `StaticToken` (test-only, see its own doc comment) and
+    /// `NotConfigured` (see its own doc comment) have nothing to
+    /// interactively log into.
+    async fn interactive_login(&self) -> Result<()> {
+        bail!("{} does not support interactive login", self.describe())
+    }
+
+    /// Whether a usable token is currently held, without a network call.
+    /// Default `false` -- `OidcPkce` overrides this to check its own
+    /// cached/persisted tokens.
+    async fn logged_in(&self) -> bool {
+        false
+    }
 }
 
 /// Test-only provider: fixed token, for constructing a `ServerClient` in a
@@ -304,7 +325,7 @@ impl TokenProvider for OidcPkce {
     async fn bearer(&self) -> Result<String> {
         let current = self.tokens.lock().await.clone();
         let Some(tokens) = current else {
-            bail!("not logged in — use Login in the client");
+            bail!("not signed in — click \"Sign in\" in the client");
         };
         let now = time::OffsetDateTime::now_utc().unix_timestamp();
         if tokens.expires_at - 60 > now {
@@ -333,10 +354,21 @@ impl TokenProvider for OidcPkce {
     fn describe(&self) -> String {
         format!("OIDC PKCE against {}", self.issuer)
     }
+
+    async fn interactive_login(&self) -> Result<()> {
+        self.login().await
+    }
+
+    async fn logged_in(&self) -> bool {
+        OidcPkce::logged_in(self).await
+    }
 }
 
-/// Provider selection: configured issuer → real PKCE; otherwise a static
-/// dev token (decision: no real IdP yet — dummy functions).
+/// Provider selection: an OIDC issuer + native client_id configured (the
+/// default now that `ClientConfig`'s own defaults point at the real
+/// deployed IDP -- see that struct's doc comment) gets the real PKCE
+/// flow; otherwise `NotConfigured`, which fails loudly rather than
+/// silently faking a session.
 pub fn provider_from_config(config: &crate::config::ClientConfig) -> Arc<dyn TokenProvider> {
     match (&config.oidc_issuer, &config.oidc_native_client_id) {
         (Some(issuer), Some(client_id)) => Arc::new(OidcPkce::new(

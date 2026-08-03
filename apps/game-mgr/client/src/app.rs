@@ -544,6 +544,16 @@ impl App {
                         ui.label(RichText::new("server not configured").weak());
                     }
                 }
+                if !snapshot.account.logged_in {
+                    let signing_in = snapshot.activity.is_some();
+                    if ui
+                        .add_enabled(!signing_in, egui::Button::new("Sign in"))
+                        .on_hover_text("opens your browser to sign in")
+                        .clicked()
+                    {
+                        self.core.send(CoreCmd::Login);
+                    }
+                }
                 if ui.button("Sessions").clicked() {
                     self.show_sessions = !self.show_sessions;
                     self.core.send(CoreCmd::RefreshSessions);
