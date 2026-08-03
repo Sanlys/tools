@@ -1,4 +1,5 @@
 # tools
+[![release](https://github.com/Sanlys/tools/actions/workflows/release.yml/badge.svg)](https://github.com/Sanlys/tools/actions/workflows/release.yml)
 
 Internal homelab tools platform: a Rust monorepo of shared adapters
 (S3, Postgres, Kubernetes, metrics), a unified egui/wasm UI, and Helm/CI
