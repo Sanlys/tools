@@ -4,7 +4,7 @@
 
 use game_mgr_api_types::{CreateProfileRequest, RenameProfileRequest, TransferProfileRequest};
 
-use crate::GameMgrPanel;
+use crate::{GameMgrPanel, Invalidate};
 
 impl GameMgrPanel {
     pub(crate) fn ui_profiles(&mut self, ui: &mut egui::Ui) {
@@ -21,7 +21,7 @@ impl GameMgrPanel {
                     name: self.new_profile_name.trim().to_string(),
                 })
                 .unwrap_or_default();
-                self.mutate("POST", "/api/v1/profiles", Some(body));
+                self.mutate("POST", "/api/v1/profiles", Some(body), Invalidate::Profiles);
                 self.new_profile_name.clear();
             }
         });
@@ -59,7 +59,12 @@ impl GameMgrPanel {
                             if !name.is_empty() {
                                 let body = serde_json::to_value(RenameProfileRequest { name })
                                     .unwrap_or_default();
-                                self.mutate("PATCH", &format!("/api/v1/profiles/{id}"), Some(body));
+                                self.mutate(
+                                    "PATCH",
+                                    &format!("/api/v1/profiles/{id}"),
+                                    Some(body),
+                                    Invalidate::Profiles,
+                                );
                             }
                         }
                         if ui.button("Cancel").clicked() {
@@ -109,6 +114,7 @@ impl GameMgrPanel {
                                     "POST",
                                     &format!("/api/v1/profiles/{}/transfer", p.id),
                                     Some(body),
+                                    Invalidate::Profiles,
                                 );
                             }
                         }
@@ -121,7 +127,12 @@ impl GameMgrPanel {
                                 "Delete this profile? This also deletes its sessions.",
                             );
                             if ui.button("Confirm delete").clicked() {
-                                self.mutate("DELETE", &format!("/api/v1/profiles/{}", p.id), None);
+                                self.mutate(
+                                    "DELETE",
+                                    &format!("/api/v1/profiles/{}", p.id),
+                                    None,
+                                    Invalidate::Profiles,
+                                );
                                 self.confirm_delete = None;
                             }
                             if ui.button("Cancel").clicked() {

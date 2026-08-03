@@ -37,6 +37,16 @@ enum Tab {
     Settings,
 }
 
+/// Which cached [`JsonResource`] a [`GameMgrPanel::mutate`] call should
+/// drop, forcing a re-fetch on the next tick. Explicit per call site so
+/// adding a mutation for a resource other than profiles can't silently
+/// keep serving stale data (`mutate` used to always reset `profiles`
+/// regardless of what was actually mutated).
+#[derive(Debug, Clone, Copy)]
+enum Invalidate {
+    Profiles,
+}
+
 pub struct GameMgrPanel {
     api_base_url: String,
     /// See `apps/hello/frontend/src/lib.rs`'s module doc -- `true` only when
@@ -156,7 +166,15 @@ impl GameMgrPanel {
     /// `apps/hello/frontend`'s `post_greeting`/`reset_greetings`: the next
     /// tick's re-fetch is the only feedback, and a missing role/ownership
     /// surfaces as a rejected status the backend already enforces.
-    fn mutate(&mut self, method: &str, path: &str, body: Option<serde_json::Value>) {
+    /// `invalidate` names the resource this call actually touched so only
+    /// that cache gets dropped -- see [`Invalidate`]'s doc comment.
+    fn mutate(
+        &mut self,
+        method: &str,
+        path: &str,
+        body: Option<serde_json::Value>,
+        invalidate: Invalidate,
+    ) {
         let Some(token) = self.bearer_token() else {
             return;
         };
@@ -176,7 +194,9 @@ impl GameMgrPanel {
                 .collect::<Vec<_>>(),
         );
         ehttp::fetch(request, |_response| {});
-        self.profiles = JsonResource::new();
+        match invalidate {
+            Invalidate::Profiles => self.profiles = JsonResource::new(),
+        }
     }
 }
 
