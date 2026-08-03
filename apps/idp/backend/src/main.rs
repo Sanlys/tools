@@ -138,23 +138,17 @@ async fn main() -> anyhow::Result<()> {
             "/api/passkeys/finish",
             post(routes::passkey::add_passkey_finish),
         )
-        .route(
-            "/api/passkeys/{id}",
-            delete(routes::passkey::delete_passkey),
-        )
+        .route("/api/passkeys/:id", delete(routes::passkey::delete_passkey))
         .route(
             "/api/sessions",
             get(routes::passkey::list_sessions).delete(routes::passkey::revoke_all_sessions),
         )
-        .route(
-            "/api/sessions/{id}",
-            delete(routes::passkey::revoke_session),
-        )
+        .route("/api/sessions/:id", delete(routes::passkey::revoke_session))
         // ── Admin ────────────────────────────────────────────────────────
         .route("/api/admin/users", get(routes::admin::list_users))
-        .route("/api/admin/users/{id}", delete(routes::admin::delete_user))
+        .route("/api/admin/users/:id", delete(routes::admin::delete_user))
         .route(
-            "/api/admin/users/{id}/roles",
+            "/api/admin/users/:id/roles",
             get(routes::admin::list_roles_for_user),
         )
         .route(
@@ -162,7 +156,7 @@ async fn main() -> anyhow::Result<()> {
             get(routes::admin::list_clients).post(routes::admin::create_client),
         )
         .route(
-            "/api/admin/clients/{client_id}",
+            "/api/admin/clients/:client_id",
             axum::routing::put(routes::admin::update_client).delete(routes::admin::delete_client),
         )
         .route(
@@ -174,7 +168,7 @@ async fn main() -> anyhow::Result<()> {
             post(routes::admin::grant_access).delete(routes::admin::revoke_access),
         )
         .route(
-            "/api/admin/users/{id}/access",
+            "/api/admin/users/:id/access",
             get(routes::admin::list_access_for_user),
         )
         .route(
@@ -182,7 +176,7 @@ async fn main() -> anyhow::Result<()> {
             get(routes::admin::list_invites).post(routes::admin::create_invite),
         )
         .route(
-            "/api/admin/invites/{id}",
+            "/api/admin/invites/:id",
             delete(routes::admin::delete_invite),
         )
         // ── Static UI (plain HTML/JS, one file per page -- see
@@ -263,4 +257,117 @@ fn env_u64(key: &str, default: u64) -> u64 {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(default)
+}
+
+/// Regression test for a real, silent bug: this workspace pins
+/// `axum = "0.7"` (whose bundled `matchit` only recognizes the older
+/// `:param`/`*rest` path syntax), but every parameterized route above
+/// used to be written with axum 0.8's `{param}` syntax instead. Nothing
+/// catches that at compile time -- `Router::route` takes a plain
+/// `&str`/`String`, with zero path-syntax validation -- so it silently
+/// registered as a route matching only the *literal* text `{id}`, never
+/// an actual captured value. Every real request to e.g.
+/// `/api/sessions/<real-uuid>` therefore matched *no* route at all and
+/// fell through to `.fallback_service(ServeDir::new(..))`, which returns
+/// 405 for anything but GET/HEAD and 404 otherwise -- exactly the
+/// symptom that shipped unnoticed (`cargo test`/`clippy` both stay green;
+/// nothing here exercised the real router with a real request).
+///
+/// This doesn't replace a real HTTP integration test against the actual
+/// `AppState`-backed router above (that needs a live Postgres, which this
+/// crate has no test harness for yet) -- it's a narrower, DB-free check
+/// that the specific path-syntax mistake that caused this doesn't creep
+/// back in. If you add a new parameterized route to the table above, add
+/// a matching one here too.
+#[cfg(test)]
+mod path_param_syntax_regression {
+    use axum::{
+        body::Body,
+        http::{Method, Request, StatusCode},
+        routing::{delete, get},
+        Router,
+    };
+    use tower::ServiceExt;
+
+    async fn ok() -> &'static str {
+        "ok"
+    }
+
+    fn router() -> Router {
+        Router::new()
+            .route("/api/sessions/:id", delete(ok))
+            .route("/api/admin/users/:id/roles", get(ok))
+            .route("/api/admin/users/:id/access", get(ok))
+            .route("/api/admin/invites/:id", delete(ok))
+            .route("/api/admin/clients/:client_id", axum::routing::put(ok))
+    }
+
+    async fn status(method: Method, path: &str) -> StatusCode {
+        let req = Request::builder()
+            .method(method)
+            .uri(path)
+            .body(Body::empty())
+            .unwrap();
+        router().oneshot(req).await.unwrap().status()
+    }
+
+    #[tokio::test]
+    async fn real_path_values_match_a_captured_param_not_only_the_literal_placeholder() {
+        assert_eq!(
+            status(
+                Method::DELETE,
+                "/api/sessions/8a074c29-7843-4d95-8007-05770e6a1997"
+            )
+            .await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            status(
+                Method::GET,
+                "/api/admin/users/edf45d60-d7b7-4c21-a2e1-17609a8ea487/roles"
+            )
+            .await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            status(
+                Method::GET,
+                "/api/admin/users/edf45d60-d7b7-4c21-a2e1-17609a8ea487/access"
+            )
+            .await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            status(
+                Method::DELETE,
+                "/api/admin/invites/a62b8347-9473-4b17-80fc-de9b425cfe8e"
+            )
+            .await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            status(Method::PUT, "/api/admin/clients/some-client-id").await,
+            StatusCode::OK
+        );
+    }
+
+    /// The failure mode this guards against, made explicit: the literal
+    /// `{id}`-syntax route from before this fix matches *only* that exact
+    /// text, never a real id.
+    #[tokio::test]
+    async fn old_curly_brace_syntax_would_only_match_its_own_literal_text() {
+        let curly_brace_route = Router::new().route("/api/sessions/{id}", delete(ok));
+        let req = Request::builder()
+            .method(Method::DELETE)
+            .uri("/api/sessions/8a074c29-7843-4d95-8007-05770e6a1997")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            curly_brace_route.oneshot(req).await.unwrap().status(),
+            StatusCode::NOT_FOUND,
+            "a real id must NOT match a `{{id}}`-syntax route -- if this starts \
+             passing, axum's path-param syntax has changed and the real routes \
+             in `main` should be revisited"
+        );
+    }
 }
