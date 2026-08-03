@@ -56,6 +56,13 @@ pub fn router(state: AppState) -> Router {
         .allow_headers(Any);
 
     Router::new()
+        // `/health`: the tool-library chart's Deployment template hardcodes
+        // both probes to this exact path for every app (see
+        // deploy/charts/tool-library/templates/_deployment.tpl) -- keep
+        // `/healthz`/`/readyz` too since existing tests and any external
+        // monitoring already use them, but the k8s liveness/readiness
+        // probes need this one or they 404 straight into the SPA fallback.
+        .route("/health", get(healthz))
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
         .nest("/api/v1", api_v1())
@@ -174,6 +181,17 @@ mod tests {
     async fn healthz_is_ok() {
         let (status, body) =
             body_string(Request::get("/healthz").body(Body::empty()).unwrap()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "ok");
+    }
+
+    /// `/health` is what the tool-library chart's liveness/readiness probes
+    /// actually hit (see `router`'s doc comment on this route) -- it must
+    /// resolve here, not fall through to the SPA fallback service.
+    #[tokio::test]
+    async fn health_is_ok() {
+        let (status, body) =
+            body_string(Request::get("/health").body(Body::empty()).unwrap()).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body, "ok");
     }
