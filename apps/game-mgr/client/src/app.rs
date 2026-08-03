@@ -437,7 +437,16 @@ pub struct App {
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let config = ClientConfig::load().unwrap_or_else(|err| {
-            tracing::warn!(%err, "failed to load config, using defaults");
+            // `?err` (Debug), not `%err` (Display): `ClientConfig::load`'s
+            // error is an `anyhow::Error` built from stacked `.context()`
+            // calls (`reading <path>` / `parsing <path>`) wrapping the
+            // real `toml::de::Error` -- anyhow's `Display` only shows the
+            // outermost context ("parsing <path>"), silently swallowing
+            // the actual cause (e.g. which field, line, and column
+            // `deny_unknown_fields` rejected). `Debug` prints the whole
+            // chain, which is the only way this warning is ever
+            // actionable.
+            tracing::warn!(?err, "failed to load config, using defaults");
             ClientConfig::default()
         });
         let ctx = cc.egui_ctx.clone();
