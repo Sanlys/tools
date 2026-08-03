@@ -1,24 +1,59 @@
 //! Client configuration: TOML file at the XDG config path, every key
 //! overridable via `GM_*` environment variables (PLAN.md §6.6).
+//!
+//! `server_url`/`oidc_issuer`/`oidc_native_client_id` default to the real
+//! deployed backend/IDP rather than `None` (see `ClientConfig`'s `Default`
+//! impl below) -- same reasoning as `apps/hello/frontend/src/bin/standalone.rs`'s
+//! `HELLO_API_BASE_URL` default: this is what a from-source or Nix build
+//! (see `flake.nix`'s `game-mgr-client` package) should do out of the box
+//! with no config file at all, not silently sit there unable to reach
+//! anything. Before this, no config file (or a config file that failed to
+//! parse and fell back to `ClientConfig::default()`, see `load` below)
+//! meant every field defaulted to `None` -- indistinguishable from "not
+//! configured yet" and "deliberately pointed at nothing", which is exactly
+//! what made this so hard to debug: the client looked "signed out" with no
+//! indication anything was wrong (see `crate::oidc::NotConfigured`), and
+//! `crate::core`'s server client was simply never constructed at all
+//! (`server_url` gated whether it exists in the first place).
 
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
-#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ClientConfig {
     /// Stats server base URL, e.g. `https://games.lysakermoen.com`. Also the
     /// gateway to bucket access -- there is no client-side S3 config
     /// anymore; the backend mediates every bucket access instead (PLAN.md
-    /// §4.3, see `crate::s3`'s module doc).
+    /// §4.3, see `crate::s3`'s module doc). Defaults to the real deployed
+    /// backend -- override with `GM_SERVER_URL` (or this field) when
+    /// developing against a local `game-mgr-backend`.
     pub server_url: Option<String>,
+    /// Defaults to the real deployed IDP -- override with `GM_OIDC_ISSUER`
+    /// when developing against a local `idp-backend`.
     pub oidc_issuer: Option<String>,
+    /// Defaults to the "game-mgr" client registered in
+    /// `deploy/idp/values.yaml`'s `IDP_CLIENTS_JSON` -- override with
+    /// `GM_OIDC_NATIVE_CLIENT_ID` if you've registered a different one
+    /// (e.g. for local dev, see `apps/idp/backend/src/dev_clients.json`).
     pub oidc_native_client_id: Option<String>,
     /// Where game install roots live. Defaults to `~/Games/game-mgr`.
     pub library_dir: Option<PathBuf>,
     pub syncthing: SyncthingConfig,
+}
+
+impl Default for ClientConfig {
+    fn default() -> Self {
+        Self {
+            server_url: Some("https://games.lysakermoen.com".to_string()),
+            oidc_issuer: Some("https://idp.k8s.lysakermoen.com".to_string()),
+            oidc_native_client_id: Some("game-mgr".to_string()),
+            library_dir: None,
+            syncthing: SyncthingConfig::default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
