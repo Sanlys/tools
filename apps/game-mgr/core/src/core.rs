@@ -105,6 +105,9 @@ pub enum CoreCmd {
     /// Create or update a game definition (PUT — id is the upsert key).
     SubmitGame(GameDraft),
     RefreshSessions,
+    /// Run an interactive login (opens the system browser) -- see
+    /// `crate::oidc::TokenProvider::interactive_login`.
+    Login,
     Shutdown,
 }
 
@@ -177,6 +180,11 @@ pub struct AccountView {
     pub profiles: Vec<ProfileDto>,
     pub active_profile: Option<Uuid>,
     pub auth_description: String,
+    /// Whether `TokenProvider::logged_in` currently holds a usable token --
+    /// distinct from `server_reachable` below, which can also be `false`
+    /// from a plain network outage while still logged in. Refreshed at
+    /// startup and after a `Login` command completes.
+    pub logged_in: bool,
     pub server_reachable: bool,
 }
 
@@ -415,6 +423,7 @@ async fn core_main(
         config,
     };
     state.account.auth_description = state.token.describe();
+    state.account.logged_in = state.token.logged_in().await;
 
     // local progress/completion events from spawned tasks
     let (event_tx, mut event_rx) = mpsc::unbounded_channel::<CoreEvent>();
@@ -469,6 +478,10 @@ enum CoreEvent {
     /// A definition was just upserted — reconcile derived state (saves folder).
     GameSubmitted(String),
     TaskFailed(String),
+    /// Interactive login completed successfully — re-run the same
+    /// registration/identity fetch startup already does, now that
+    /// `token.bearer()` can actually succeed.
+    LoginFinished,
 }
 
 async fn handle_cmd(
@@ -566,6 +579,7 @@ async fn handle_cmd(
                 }
             }
         }
+        CoreCmd::Login => spawn_login(state, events),
     }
 }
 
@@ -729,7 +743,40 @@ async fn handle_event(event: CoreEvent, state: &mut CoreState) {
             state.activity = None;
             state.last_error = Some(message);
         }
+        CoreEvent::LoginFinished => {
+            state.activity = None;
+            state.account.auth_description = state.token.describe();
+            state.account.logged_in = state.token.logged_in().await;
+            // Same two calls startup makes right after constructing
+            // `token` -- `bearer()` can actually succeed now, so redo the
+            // machine-registration + identity fetch it depends on rather
+            // than waiting for the next unrelated action to stumble into
+            // a fresh attempt.
+            bootstrap_server_session(state).await;
+            load_catalog(state).await;
+        }
     }
+}
+
+/// Run an interactive login in the background: opens the system browser
+/// and blocks (off the UI/core-loop thread) until the loopback redirect
+/// lands or it times out -- see `oidc::OidcPkce::login`.
+fn spawn_login(state: &CoreState, events: &mpsc::UnboundedSender<CoreEvent>) {
+    let token = state.token.clone();
+    let events = events.clone();
+    tokio::spawn(async move {
+        let _ = events.send(CoreEvent::Activity(Some(
+            "waiting for browser sign-in…".into(),
+        )));
+        match token.interactive_login().await {
+            Ok(()) => {
+                let _ = events.send(CoreEvent::LoginFinished);
+            }
+            Err(err) => {
+                let _ = events.send(CoreEvent::TaskFailed(format!("sign-in: {err:#}")));
+            }
+        }
+    });
 }
 
 /// Fetch the catalog in the background and rebuild the registry.
