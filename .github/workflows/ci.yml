@@ -11,6 +11,34 @@ env:
 jobs:
   rust:
     runs-on: ubuntu-latest
+    # Real service for game-mgr-backend's gated DB integration suites
+    # (tests/api_e2e.rs, tests/repo_db.rs -- PLAN.md §15, carried over from
+    # game-mgr's own CI). Harmless to every other crate: nothing else in
+    # this workspace reads DATABASE_URL from a test.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: gamemgr
+          POSTGRES_PASSWORD: gamemgr
+          POSTGRES_DB: gamemgr
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U gamemgr"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://gamemgr:gamemgr@localhost:5432/gamemgr
+      GM_S3_TEST_ENDPOINT: http://localhost:9000
+      GM_S3_TEST_ACCESS_KEY: gamemgr
+      GM_S3_TEST_SECRET_KEY: gamemgr-secret
+      # skipping the gated DB/S3 suites above is an error in CI -- they
+      # must actually run, not silently no-op for lack of DATABASE_URL /
+      # GM_S3_TEST_ENDPOINT.
+      GM_REQUIRE_DB_TESTS: "1"
+      GM_REQUIRE_S3_TESTS: "1"
     steps:
       - uses: actions/checkout@v4
 
@@ -26,6 +54,17 @@ jobs:
       # only for native targets -- the wasm build below never touches it.
       - name: install native build deps (libdbus, for keyring)
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+
+      # MinIO from its first-party registry (S3 stand-in for
+      # game-mgr-core's tests/s3_minio.rs; tests create their own buckets).
+      # Plain `docker run`, not a GitHub service container: those can't
+      # pass a command, and MinIO needs `server /data`.
+      - name: start MinIO (S3 stand-in for game-mgr-core's S3 tests)
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=gamemgr -e MINIO_ROOT_PASSWORD=gamemgr-secret \
+            quay.io/minio/minio server /data
+          timeout 60 sh -c 'until curl -fsS http://localhost:9000/minio/health/live; do sleep 1; done'
 
       - name: fmt
         run: cargo fmt --all -- --check

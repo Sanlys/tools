@@ -78,7 +78,7 @@ env:
           ],
           "roles": [],
           "native": true,
-          "access_restricted": false
+          "access_restricted": true
         }
       ]
 serviceAccount:
