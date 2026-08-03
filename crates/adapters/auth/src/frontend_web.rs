@@ -166,7 +166,30 @@ impl LoginWidget {
         if let Some(result) = take_pending_result(&config.client_id) {
             match result {
                 Ok(session) => self.session = Some(session),
-                Err(err) => self.error = Some(err),
+                Err(err) => {
+                    // A refresh can fail with a legitimate-looking
+                    // "invalid_grant" (`apps/idp/backend`'s
+                    // `token_refresh` rejects a refresh token that's
+                    // already been consumed) even though the session
+                    // itself is fine: refresh tokens are single-use and
+                    // rotate on every use, and the access/refresh tokens
+                    // now live in `localStorage` (shared across every tab
+                    // of this origin, unlike the `sessionStorage` they
+                    // used to live in) -- so a second tab, or a page
+                    // reload racing an in-flight refresh from the tab
+                    // being replaced, can land its own refresh attempt
+                    // against a token another one already consumed and
+                    // rotated a moment earlier. Check storage again before
+                    // surfacing this as a real error: if it now holds a
+                    // *different*, still-valid session, some other
+                    // in-flight attempt already won that race and rotated
+                    // the token first, so adopt its result instead of
+                    // bouncing this tab to "signed out".
+                    match restore_session(&config.client_id) {
+                        Some(fresh) if !is_expired(&fresh.claims) => self.session = Some(fresh),
+                        _ => self.error = Some(err),
+                    }
+                }
             }
         }
 
@@ -179,6 +202,22 @@ impl LoginWidget {
         // `access_token`).
         if let Some(session) = self.session.clone() {
             let already_expired = is_expired(&session.claims);
+            if already_expired {
+                // Before racing anyone else for a refresh, check whether
+                // someone already won: another tab (or a previous
+                // in-flight attempt from before a reload) may have already
+                // refreshed this exact session and written a fresher one
+                // to `localStorage` -- see the doc comment above on why
+                // that's possible now. Adopting it here avoids firing a
+                // redundant `refresh_token` request that would otherwise
+                // try to consume an already-rotated single-use token.
+                if let Some(fresh) = restore_session(&config.client_id) {
+                    if fresh.access_token != session.access_token && !is_expired(&fresh.claims) {
+                        self.session = Some(fresh);
+                        return;
+                    }
+                }
+            }
             let already_attempted =
                 self.refresh_attempted_for.as_deref() == Some(&session.access_token);
             if already_expired && !already_attempted {

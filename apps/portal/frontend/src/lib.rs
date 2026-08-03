@@ -233,17 +233,18 @@ impl eframe::App for PortalApp {
         }
         self.login.tick(ctx);
 
-        egui::TopBottomPanel::top("auth_bar").show(ctx, |ui| {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                self.login.ui(ui);
+        egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.heading("Tools Platform");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    self.login.ui(ui);
+                });
             });
         });
 
         egui::SidePanel::left("nav")
             .min_width(180.0)
             .show(ctx, |ui| {
-                ui.heading("Tools Platform");
-                ui.separator();
                 if ui.button("Home").clicked() {
                     self.open_builtin("home");
                 }
