@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>game-mgr</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+
+    <!-- Same trunk-driven pattern as apps/hello/frontend/index.html, just
+         for this tool's own standalone bundle -- see
+         apps/game-mgr/frontend/src/lib.rs's `start()`. -->
+    <link data-trunk rel="rust" data-target-name="game_mgr_frontend" />
+    <base data-trunk-public-url />
+
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #1e1e1e;
+      }
+      canvas#the_canvas_id {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="the_canvas_id"></canvas>
+  </body>
+</html>

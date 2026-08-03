@@ -1,0 +1,43 @@
+[package]
+name = "game-mgr-backend"
+# See apps/game-mgr/core/Cargo.toml's comment on mixed editions in this
+# workspace.
+edition = "2024"
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "game_mgr_backend"
+path = "src/lib.rs"
+
+[[bin]]
+name = "game-mgr-backend"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+auth-adapter = { workspace = true, features = ["backend"] }
+axum = { workspace = true }
+game-mgr-api-types = { workspace = true }
+metrics-adapter = { workspace = true }
+postgres-adapter = { workspace = true }
+semver = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+time = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time", "signal", "fs"] }
+tower-http = { workspace = true, features = ["cors", "fs", "trace"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+base64 = { workspace = true }
+http-body-util = { workspace = true }
+jsonwebtoken = { workspace = true }
+rand = { workspace = true }
+reqwest = { workspace = true }
+rsa = { workspace = true }
+tower = { workspace = true }

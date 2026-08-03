@@ -20,6 +20,7 @@ platform-config.workspace = true
 api-types.workspace = true
 auth-adapter = { workspace = true, features = ["frontend-web", "frontend-native"] }
 hello-frontend.workspace = true
+game-mgr-frontend.workspace = true
 tracing.workspace = true
 
 egui.workspace = true

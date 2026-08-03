@@ -1,0 +1,22 @@
+# Local dev: `trunk serve` from this directory. Run
+# `cargo run -p game-mgr-backend` alongside it (defaults to 0.0.0.0:8083);
+# the proxy below forwards this tool's own API calls to it so the wasm app
+# can use relative URLs exactly as it does in production, where
+# game-mgr-backend serves both the API and this compiled bundle from one
+# container. See apps/hello/frontend/Trunk.toml for the same pattern.
+[build]
+target = "index.html"
+dist = "dist"
+
+[serve]
+port = 1422
+open = false
+
+[[proxy]]
+backend = "http://127.0.0.1:8083/api"
+
+[[proxy]]
+backend = "http://127.0.0.1:8083/healthz"
+
+[[proxy]]
+backend = "http://127.0.0.1:8083/config"

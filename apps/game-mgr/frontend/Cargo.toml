@@ -1,0 +1,42 @@
+[package]
+name = "game-mgr-frontend"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "game_mgr_frontend"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "game-mgr-standalone"
+path = "src/bin/standalone.rs"
+
+# See apps/hello/frontend/Cargo.toml's comment: on by default so this
+# crate's own standalone wasm build gets its #[wasm_bindgen(start)] entry
+# point; apps/portal/frontend turns it off (default-features = false) to
+# avoid a linker collision between two `start()` exports in one wasm module.
+[features]
+default = ["standalone"]
+standalone = []
+
+[dependencies]
+platform-core.workspace = true
+platform-config.workspace = true
+auth-adapter = { workspace = true, features = ["frontend-web", "frontend-native"] }
+game-mgr-api-types.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+time.workspace = true
+uuid.workspace = true
+egui.workspace = true
+egui_plot.workspace = true
+ehttp.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+console_error_panic_hook = "0.1"
+tracing-wasm = "0.2"

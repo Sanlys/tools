@@ -42,6 +42,30 @@ jobs:
       - name: wasm build (hello's own standalone bundle, separate cdylib from portal's)
         run: cargo build --target wasm32-unknown-unknown -p hello-frontend --lib
 
+      - name: wasm build (game-mgr-frontend's own standalone bundle)
+        run: cargo build --target wasm32-unknown-unknown -p game-mgr-frontend --lib
+
+  rust-windows:
+    # game-mgr-core/-client are the only crates in this workspace with any
+    # Windows-specific code (`game_mgr_core::platform`'s `#[cfg(windows)]`
+    # half, `run::NativeLaunch`, the `GogGame` class's native launch path --
+    # see PLAN.md §14 and apps/game-mgr's port notes) -- everything else here
+    # is a server/wasm workload that never runs on Windows, so only this
+    # crate pair needs checking on a Windows runner.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: check (native, Windows)
+        run: cargo check -p game-mgr-core -p game-mgr-client --all-targets
+
+      - name: test (game-mgr-core; no Windows machine has run these for real yet)
+        run: cargo test -p game-mgr-core --lib
+
   helm:
     runs-on: ubuntu-latest
     steps:
@@ -74,6 +98,8 @@ jobs:
             dockerfile: apps/portal/backend/Dockerfile
           - name: idp-backend
             dockerfile: apps/idp/backend/Dockerfile
+          - name: game-mgr-backend
+            dockerfile: apps/game-mgr/backend/Dockerfile
     steps:
       - uses: actions/checkout@v4
 

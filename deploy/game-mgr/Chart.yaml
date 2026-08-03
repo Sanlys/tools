@@ -1,0 +1,10 @@
+apiVersion: v2
+name: game-mgr
+description: Personal game management platform's stats/catalog API + GameMgrPanel wasm UI -- ported from the standalone game-mgr repo onto the shared tool-library chart.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+dependencies:
+  - name: tool-library
+    version: 0.1.0
+    repository: "file://../charts/tool-library"

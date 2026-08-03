@@ -15,6 +15,13 @@ name: release
 on:
   push:
     branches: [main]
+    # Desktop client builds (the `desktop` job below) fire on a version tag
+    # instead of every push to main -- an end user downloads a specific
+    # tagged release, not a moving `latest` the way a container image
+    # tracks. Doesn't affect the `release` job below (image build+push+
+    # GitOps bump), which only runs on the `main`-push side of this trigger
+    # (see its `if:`).
+    tags: ["v*"]
 
 permissions:
   contents: write
@@ -24,6 +31,7 @@ env:
 
 jobs:
   release:
+    if: github.ref_type == 'branch'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -40,6 +48,9 @@ jobs:
           - name: idp
             dockerfile: apps/idp/backend/Dockerfile
             image: idp-backend
+          - name: game-mgr
+            dockerfile: apps/game-mgr/backend/Dockerfile
+            image: game-mgr-backend
     steps:
       - uses: actions/checkout@v4
         with:
@@ -88,3 +99,42 @@ jobs:
           git commit -m "deploy(${{ matrix.name }}): bump image tag to ${{ github.sha }} [skip ci]"
           git pull --rebase origin main
           git push origin HEAD:main
+
+  # game-mgr-client is the only deployable in this repo that isn't a
+  # container image -- it's a desktop app end users download and run on
+  # their own gaming machine (Linux or Windows), not something ArgoCD
+  # deploys into the cluster. Tag-triggered rather than tied to `main`:
+  # a user grabs a specific release, not a moving target. See
+  # apps/game-mgr/client's module docs and PLAN.md §14 for the Windows
+  # support this ships.
+  desktop:
+    if: github.ref_type == 'tag'
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            bin: game-mgr-client
+            asset: game-mgr-client-linux-x86_64
+          - os: windows-latest
+            bin: game-mgr-client.exe
+            asset: game-mgr-client-windows-x86_64.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: build
+        run: cargo build --release -p game-mgr-client
+
+      - name: rename artifact
+        shell: bash
+        run: cp "target/release/${{ matrix.bin }}" "${{ matrix.asset }}"
+
+      - name: attach to the GitHub Release for this tag
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.asset }}
+          fail_on_unmatched_files: true

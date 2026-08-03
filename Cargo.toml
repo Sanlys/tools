@@ -15,6 +15,11 @@ members = [
     "apps/portal/backend",
     "apps/portal/frontend",
     "apps/idp/backend",
+    "apps/game-mgr/api-types",
+    "apps/game-mgr/core",
+    "apps/game-mgr/backend",
+    "apps/game-mgr/frontend",
+    "apps/game-mgr/client",
 ]
 
 [workspace.package]
@@ -42,6 +47,12 @@ auth-adapter = { path = "crates/adapters/auth" }
 # a package's own [features].default always applies to itself regardless
 # of what other members request of it via workspace-dependency inheritance.
 hello-frontend = { path = "apps/hello/frontend", default-features = false }
+game-mgr-api-types = { path = "apps/game-mgr/api-types" }
+game-mgr-core = { path = "apps/game-mgr/core" }
+# default-features = false for the same reason as hello-frontend above:
+# apps/portal/frontend embeds GameMgrPanel too and must not pull in this
+# crate's own #[wasm_bindgen(start)].
+game-mgr-frontend = { path = "apps/game-mgr/frontend", default-features = false }
 
 # shared external deps (kept in one place so every crate/app stays in
 # lockstep; a member adds its own extra features via
@@ -59,9 +70,36 @@ base64 = "0.22"
 sha2 = "0.10"
 hex = "0.4"
 url = "2"
+time = { version = "0.3", features = ["serde-well-known", "macros"] }
+
+# apps/game-mgr's install/launch engine (game-mgr-core) and its desktop
+# client -- not needed by any other app today, kept here rather than
+# per-crate versions so a future second consumer stays in lockstep too.
+async-trait = "0.1"
+aws-credential-types = { version = "1", features = ["hardcoded-credentials"] }
+dirs = "6"
+flate2 = "1"
+hostname = "0.4"
+open = "5"
+quick-xml = "0.36"
+rusqlite = { version = "0.32", features = ["bundled"] }
+semver = { version = "1", features = ["serde"] }
+shlex = "1"
+sevenz-rust2 = "0.13"
+sysinfo = "0.33"
+tar = "0.4"
+tokio-util = "0.7"
+toml = "0.8"
+tracing-appender = "0.2"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+tempfile = "3"
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }
+rfd = "0.15"
 
 egui = "0.29"
 eframe = { version = "0.29", default-features = false, features = ["glow", "persistence", "default_fonts", "wayland", "x11"] }
+egui_plot = "0.29"
 ehttp = "0.5"
 poll-promise = "0.3"
 
@@ -69,7 +107,7 @@ axum = "0.7"
 axum-extra = { version = "0.9", features = ["cookie", "cookie-private"] }
 tokio = "1"
 tower-http = "0.5"
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres", "uuid", "time", "json", "migrate", "macros", "derive"] }
 aws-sdk-s3 = "1"
 kube = { version = "0.95", default-features = false, features = ["client", "rustls-tls"] }
 k8s-openapi = { version = "0.23", features = ["v1_29"] }

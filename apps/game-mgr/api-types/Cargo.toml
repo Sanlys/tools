@@ -1,0 +1,24 @@
+[package]
+name = "game-mgr-api-types"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "game_mgr_api_types"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+time = { workspace = true }
+uuid = { workspace = true }
+
+# The workspace-wide `uuid` dependency enables the "v4" feature (random
+# generation), which on wasm32 needs an explicit randomness source -- this
+# crate itself never generates a UUID (server/client do), but Cargo's
+# feature unification means any consumer compiling for wasm32 (e.g.
+# game-mgr-frontend) needs this satisfied anyway.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+uuid = { workspace = true, features = ["js"] }
