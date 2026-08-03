@@ -1,9 +1,12 @@
 # Values for `game-mgr` -- ported from the standalone game-mgr repo (see
-# apps/game-mgr's module docs). Copy deploy/hello/values.yaml's shape for a
-# new tool that needs Postgres but no S3 bucket -- this one skips the bucket
-# entirely because gm-server never touches S3 (only the desktop client
-# does, directly against the bucket with its own credentials -- see
-# apps/game-mgr/core's module docs).
+# apps/game-mgr's module docs). The bucket is provisioned the same way
+# deploy/hello/values.yaml's is (a rook-ceph ObjectBucketClaim, see
+# docs/s3-buckets.md): game-mgr-backend holds the only S3 credentials that
+# exist anywhere in this app now (apps/game-mgr/backend/src/api/artifacts.rs)
+# and mediates every bucket access the desktop client makes -- listing a
+# prefix and generating short-lived presigned download URLs -- instead of
+# the client holding its own long-lived bucket credentials the way the
+# original standalone game-mgr's desktop client did.
 
 nameOverride: "game-mgr"
 fullnameOverride: ""
@@ -53,7 +56,10 @@ ingress:
     enabled: true
     secretName: games-lysakermoen-com-tls
 bucket:
-  enabled: false
+  enabled: true
+  bucketName: tools-game-mgr
+  # Must match the name of your rook-ceph bucket StorageClass.
+  storageClassName: rook-ceph-bucket
 postgres:
   enabled: true
   image: postgres:16-alpine

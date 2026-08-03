@@ -4,8 +4,9 @@
 mod common;
 
 use axum::http::StatusCode;
-use common::{TestDb, app, req, user_id_of};
+use common::{TestBucket, TestDb, app, app_with_s3, req, user_id_of};
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 #[tokio::test]
@@ -572,6 +573,146 @@ async fn readyz_is_ok_with_database() {
 
     let (status, body) = req(&app, "GET", "/readyz", None, None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
+
+    db.cleanup().await;
+}
+
+/// The desktop client never lists the bucket itself (see
+/// `apps/game-mgr/backend/src/api/artifacts.rs`'s module doc): this drives
+/// the Add/Edit Game picker instead, resolving each file's `.sha256`
+/// sidecar server-side.
+#[tokio::test]
+async fn artifacts_scan_resolves_sidecars_and_lists_prefix() {
+    let Some(db) = TestDb::create().await else {
+        return;
+    };
+    let Some(bucket) = TestBucket::create().await else {
+        return;
+    };
+    let app = app_with_s3(db.pool.clone(), bucket.client.clone(), bucket.name.clone());
+
+    let hash = "ab".repeat(32);
+    bucket
+        .put("gog/bg3/setup.exe", b"installer bytes".to_vec())
+        .await;
+    bucket
+        .put(
+            "gog/bg3/setup.exe.sha256",
+            format!("{hash}  setup.exe\n").into_bytes(),
+        )
+        .await;
+    bucket
+        .put("gog/bg3/readme.txt", b"no sidecar for this one".to_vec())
+        .await;
+    // outside the scanned prefix -- must not appear in the response
+    bucket
+        .put("gog/other-game/setup.exe", b"unrelated".to_vec())
+        .await;
+
+    let (status, body) = req(
+        &app,
+        "GET",
+        "/api/v1/artifacts/scan?prefix=gog/bg3/",
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let files = body.as_array().unwrap();
+    assert_eq!(files.len(), 2, "sidecars aren't listed as files: {files:?}");
+
+    let setup = files
+        .iter()
+        .find(|f| f["key"] == "gog/bg3/setup.exe")
+        .expect("setup.exe present");
+    assert_eq!(setup["sha256"], hash);
+    assert_eq!(setup["size"], 15);
+
+    let readme = files
+        .iter()
+        .find(|f| f["key"] == "gog/bg3/readme.txt")
+        .expect("readme.txt present");
+    assert!(readme["sha256"].is_null(), "no sidecar => no sha256");
+
+    db.cleanup().await;
+}
+
+#[tokio::test]
+async fn artifacts_scan_rejects_empty_prefix() {
+    let Some(db) = TestDb::create().await else {
+        return;
+    };
+    let Some(bucket) = TestBucket::create().await else {
+        return;
+    };
+    let app = app_with_s3(db.pool.clone(), bucket.client.clone(), bucket.name.clone());
+
+    let (status, _) = req(&app, "GET", "/api/v1/artifacts/scan?prefix=", None, None).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+
+    db.cleanup().await;
+}
+
+/// The presigned URL must be independently usable -- a plain GET with no
+/// bearer token, since it's meant for the client's own HTTP fetch, not a
+/// second round-trip through this API.
+#[tokio::test]
+async fn artifacts_download_url_is_a_working_presigned_get() {
+    let Some(db) = TestDb::create().await else {
+        return;
+    };
+    let Some(bucket) = TestBucket::create().await else {
+        return;
+    };
+    let app = app_with_s3(db.pool.clone(), bucket.client.clone(), bucket.name.clone());
+
+    let content = b"the actual installer bytes".to_vec();
+    bucket.put("gog/bg3/setup.exe", content.clone()).await;
+
+    let (status, body) = req(
+        &app,
+        "GET",
+        "/api/v1/artifacts/download-url?key=gog/bg3/setup.exe",
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let url = body["url"].as_str().expect("url present");
+    assert!(body["expires_in_s"].as_u64().unwrap() > 0);
+
+    let fetched = reqwest::get(url).await.unwrap();
+    assert_eq!(fetched.status(), reqwest::StatusCode::OK);
+    let bytes = fetched.bytes().await.unwrap();
+    assert_eq!(bytes.as_ref(), content.as_slice());
+    // sanity: this is really content-addressed, not a lucky coincidence
+    assert_eq!(
+        hex::encode(Sha256::digest(&bytes)),
+        hex::encode(Sha256::digest(&content))
+    );
+
+    db.cleanup().await;
+}
+
+#[tokio::test]
+async fn artifacts_download_url_rejects_empty_key() {
+    let Some(db) = TestDb::create().await else {
+        return;
+    };
+    let Some(bucket) = TestBucket::create().await else {
+        return;
+    };
+    let app = app_with_s3(db.pool.clone(), bucket.client.clone(), bucket.name.clone());
+
+    let (status, _) = req(
+        &app,
+        "GET",
+        "/api/v1/artifacts/download-url?key=",
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 
     db.cleanup().await;
 }

@@ -1,11 +1,13 @@
-//! Bucket prefix scanning for the Add/Edit Game UI: list the objects, read
-//! their `.sha256` sidecars (instant — no multi-GB streaming) and suggest a
-//! role per file. The user adjusts roles in the picker before submitting.
+//! Bucket prefix scanning for the Add/Edit Game UI: list the objects (via
+//! the backend's `/api/v1/artifacts/scan`, which also resolves each file's
+//! `.sha256` sidecar server-side -- instant, no multi-GB streaming, and no
+//! bucket credentials on this side) and suggest a role per file. The user
+//! adjusts roles in the picker before submitting.
 
 use anyhow::Result;
 use game_mgr_api_types::ArtifactRole;
 
-use crate::s3::S3Client;
+use crate::stats::ServerClient;
 
 /// Role suggestion for the picker; `Ignore` files are not submitted at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,14 +41,6 @@ pub struct ScannedFile {
     pub suggested: SuggestedRole,
 }
 
-/// Parse `sha256sum`-style sidecar content: first 64-hex token wins.
-pub fn parse_sha256_sidecar(content: &[u8]) -> Option<String> {
-    let text = String::from_utf8_lossy(content);
-    text.split_whitespace()
-        .find(|token| token.len() == 64 && token.chars().all(|c| c.is_ascii_hexdigit()))
-        .map(str::to_lowercase)
-}
-
 /// Heuristic role suggestion from the key path relative to the scan prefix.
 /// Only `.exe`/`.bin` are installable by the gog class; everything else
 /// (mojosetup `.sh`, readmes, …) defaults to Ignore — the Farlanders case:
@@ -71,67 +65,24 @@ pub fn suggest_role(prefix: &str, key: &str) -> SuggestedRole {
     SuggestedRole::Base
 }
 
-/// List a prefix and resolve hashes from sidecars. Fast: one listing plus
-/// one tiny GET per sidecar.
-pub async fn scan_prefix(s3: &S3Client, prefix: &str) -> Result<Vec<ScannedFile>> {
-    let keys = s3.list_keys(prefix).await?;
-
-    let mut sidecars: std::collections::HashMap<String, String> = Default::default();
-    let mut files: Vec<(String, i64)> = Vec::new();
-    for (key, size) in keys {
-        if let Some(target) = key.strip_suffix(".sha256") {
-            sidecars.insert(target.to_string(), key.clone());
-        } else {
-            files.push((key, size));
-        }
-    }
-
-    let mut scanned = Vec::with_capacity(files.len());
-    for (key, size) in files {
-        let sha256 = match sidecars.get(&key) {
-            Some(sidecar_key) => match s3.read_small(sidecar_key, 64 * 1024).await {
-                Ok(content) => {
-                    let parsed = parse_sha256_sidecar(&content);
-                    if parsed.is_none() {
-                        tracing::warn!(key = %sidecar_key, "sidecar exists but holds no sha256");
-                    }
-                    parsed
-                }
-                Err(err) => {
-                    tracing::warn!(key = %sidecar_key, %err, "failed to read sidecar");
-                    None
-                }
-            },
-            None => None,
-        };
-        scanned.push(ScannedFile {
-            suggested: suggest_role(prefix, &key),
-            bucket_key: key,
-            size,
-            sha256,
-        });
-    }
-    Ok(scanned)
+/// List a prefix through the backend, which already resolved each file's
+/// sidecar hash server-side, and apply the role heuristic client-side.
+pub async fn scan_prefix(server: &ServerClient, prefix: &str) -> Result<Vec<ScannedFile>> {
+    let objects = server.scan(prefix).await?;
+    Ok(objects
+        .into_iter()
+        .map(|obj| ScannedFile {
+            suggested: suggest_role(prefix, &obj.key),
+            bucket_key: obj.key,
+            size: obj.size,
+            sha256: obj.sha256,
+        })
+        .collect())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn sidecar_parsing_takes_the_hex_token() {
-        let hash = "ab".repeat(32);
-        // sha256sum format: "<hash>  <filename>"
-        let content = format!("{hash}  setup_baldurs_gate_3_(89470)-1.bin\n");
-        assert_eq!(parse_sha256_sidecar(content.as_bytes()), Some(hash.clone()));
-        // hash only, uppercase normalised
-        assert_eq!(
-            parse_sha256_sidecar(hash.to_uppercase().as_bytes()),
-            Some(hash)
-        );
-        assert_eq!(parse_sha256_sidecar(b"not a hash at all"), None);
-        assert_eq!(parse_sha256_sidecar(b""), None);
-    }
 
     #[test]
     fn role_suggestions_match_the_bg3_layout() {
@@ -185,5 +136,54 @@ mod tests {
             suggest_role(p, "gog/farlanders/setup_farlanders.exe"),
             SuggestedRole::Base
         );
+    }
+
+    #[tokio::test]
+    async fn scan_prefix_applies_role_heuristic_to_the_backend_response() {
+        use crate::oidc::StaticToken;
+        use axum::routing::get;
+        use std::sync::Arc;
+
+        let app = axum::Router::new().route(
+            "/api/v1/artifacts/scan",
+            get(|| async {
+                axum::Json(vec![
+                    game_mgr_api_types::ScannedObjectDto {
+                        key: "gog/bg3/setup.exe".into(),
+                        size: 100,
+                        sha256: Some("ab".repeat(32)),
+                    },
+                    game_mgr_api_types::ScannedObjectDto {
+                        key: "gog/bg3/readme.txt".into(),
+                        size: 5,
+                        sha256: None,
+                    },
+                ])
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let server = ServerClient::new(
+            &format!("http://{addr}"),
+            Arc::new(StaticToken("tok".into())),
+        )
+        .unwrap();
+        let files = scan_prefix(&server, "gog/bg3/").await.unwrap();
+
+        let setup = files
+            .iter()
+            .find(|f| f.bucket_key == "gog/bg3/setup.exe")
+            .unwrap();
+        assert_eq!(setup.sha256.as_deref(), Some("ab".repeat(32).as_str()));
+        assert_eq!(setup.suggested, SuggestedRole::Base);
+
+        let readme = files
+            .iter()
+            .find(|f| f.bucket_key == "gog/bg3/readme.txt")
+            .unwrap();
+        assert!(readme.sha256.is_none());
+        assert_eq!(readme.suggested, SuggestedRole::Ignore);
     }
 }

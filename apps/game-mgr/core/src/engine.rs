@@ -196,7 +196,7 @@ mod tests {
             services: Arc::new(Services {
                 config: ClientConfig::default(),
                 http: reqwest::Client::new(),
-                s3: None,
+                server: None,
                 syncthing: Err("not configured in engine tests".into()),
                 library_dir: dir.join("lib"),
                 tools_dir: dir.join("tools"),

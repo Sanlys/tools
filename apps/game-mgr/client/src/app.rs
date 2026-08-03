@@ -649,7 +649,7 @@ impl App {
                     RichText::new(
                         "Upload files (with .sha256 sidecars) to the bucket, scan their \
                          prefix, classify each file, submit. Hashes come from the sidecars \
-                         — registration is instant (docs/uploading-game-data.md).",
+                         — registration is instant (docs/game-mgr-buckets.md).",
                     )
                     .weak(),
                 );

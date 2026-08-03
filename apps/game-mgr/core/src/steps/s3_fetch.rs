@@ -51,16 +51,16 @@ impl InstallStep for S3FetchStep {
         cancel: &CancellationToken,
     ) -> anyhow::Result<()> {
         progress.send(Progress::Message(self.label()));
-        ctx.services
-            .s3()?
-            .download(
-                &self.artifact.bucket_key,
-                &self.dest,
-                &self.artifact.sha256,
-                progress,
-                cancel,
-            )
-            .await?;
+        crate::s3::download(
+            &ctx.services.http,
+            ctx.services.server()?,
+            &self.artifact.bucket_key,
+            &self.dest,
+            &self.artifact.sha256,
+            progress,
+            cancel,
+        )
+        .await?;
         crate::steps::write_sentinel(&self.dest.with_extension("gm-ok"), &self.artifact.sha256)
     }
 }
