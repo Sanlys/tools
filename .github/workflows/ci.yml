@@ -89,11 +89,17 @@ jobs:
 
   rust-windows:
     # game-mgr-core/-client are the only crates in this workspace with any
-    # Windows-specific code (`game_mgr_core::platform`'s `#[cfg(windows)]`
-    # half, `run::NativeLaunch`, the `GogGame` class's native launch path --
-    # see PLAN.md §14 and apps/game-mgr's port notes) -- everything else here
-    # is a server/wasm workload that never runs on Windows, so only this
-    # crate pair needs checking on a Windows runner.
+    # actual Windows-specific code (`game_mgr_core::platform`'s
+    # `#[cfg(windows)]` half, `run::NativeLaunch`, the `GogGame` class's
+    # native launch path -- see PLAN.md §14 and apps/game-mgr's port
+    # notes). portal-frontend is checked here too even though it has none:
+    # `release.yml`'s `desktop` job now ships `portal-desktop.exe` built on
+    # windows-latest, and that binary pulls in auth-adapter's native login
+    # flow (`keyring`/`webbrowser`/`ureq`, see crates/adapters/auth) --
+    # deps game-mgr-client never exercises, so this is the only thing in
+    # CI that would catch a Windows-only break there before a tagged
+    # release ships it. Everything else in this workspace is a
+    # server/wasm workload that never runs on Windows.
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -103,7 +109,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: check (native, Windows)
-        run: cargo check -p game-mgr-core -p game-mgr-client --all-targets
+        run: cargo check -p game-mgr-core -p game-mgr-client -p portal-frontend --all-targets
 
       - name: test (game-mgr-core; no Windows machine has run these for real yet)
         run: cargo test -p game-mgr-core --lib

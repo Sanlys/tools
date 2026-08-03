@@ -108,24 +108,36 @@ jobs:
           git pull --rebase origin main
           git push origin HEAD:main
 
-  # game-mgr-client is the only deployable in this repo that isn't a
-  # container image -- it's a desktop app end users download and run on
-  # their own gaming machine (Linux or Windows), not something ArgoCD
-  # deploys into the cluster. Tag-triggered rather than tied to `main`:
-  # a user grabs a specific release, not a moving target. See
-  # apps/game-mgr/client's module docs and PLAN.md §14 for the Windows
-  # support this ships.
+  # Desktop binaries this repo ships to end users directly (Linux/Windows),
+  # rather than a container image ArgoCD deploys into the cluster.
+  # Tag-triggered rather than tied to `main`: a user grabs a specific
+  # release, not a moving target.
+  #   - game-mgr-client: see apps/game-mgr/client's module docs and
+  #     PLAN.md §14 for the Windows support this ships.
+  #   - portal-desktop: the unified portal (apps/portal/frontend), run as
+  #     a native window instead of in a browser -- see
+  #     apps/portal/frontend/src/bin/desktop.rs's module doc comment.
   desktop:
     if: github.ref_type == 'tag'
     strategy:
       matrix:
         include:
           - os: ubuntu-latest
+            package: game-mgr-client
             bin: game-mgr-client
             asset: game-mgr-client-linux-x86_64
           - os: windows-latest
+            package: game-mgr-client
             bin: game-mgr-client.exe
             asset: game-mgr-client-windows-x86_64.exe
+          - os: ubuntu-latest
+            package: portal-frontend
+            bin: portal-desktop
+            asset: portal-desktop-linux-x86_64
+          - os: windows-latest
+            package: portal-frontend
+            bin: portal-desktop.exe
+            asset: portal-desktop-windows-x86_64.exe
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -134,8 +146,17 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # keyring's Linux backend (used by portal-desktop's native login
+      # flow via auth-adapter, see crates/adapters/auth) needs dbus
+      # headers to build -- same requirement as ci.yml's rust job. A no-op
+      # on windows-latest and harmless for game-mgr-client, which doesn't
+      # use it.
+      - name: install native build deps (libdbus, for keyring)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+
       - name: build
-        run: cargo build --release -p game-mgr-client
+        run: cargo build --release -p ${{ matrix.package }}
 
       - name: rename artifact
         shell: bash

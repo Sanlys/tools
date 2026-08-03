@@ -45,9 +45,12 @@ env:
         {
           "client_id": "portal",
           "name": "Tools Portal",
-          "redirect_uris": ["https://portal.k8s.lysakermoen.com/"],
+          "redirect_uris": [
+            "https://portal.k8s.lysakermoen.com/",
+            "http://127.0.0.1:0/callback"
+          ],
           "roles": [],
-          "native": false,
+          "native": true,
           "access_restricted": true
         },
         {

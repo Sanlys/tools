@@ -253,6 +253,10 @@ impl SyncthingClient {
     }
 
     /// Folder health for sync-status reporting: completion + conflicts.
+    /// Not called from `apps/game-mgr/backend` yet -- the `sync_status`
+    /// table it would feed (`apps/game-mgr/backend/migrations/0001_init.sql`)
+    /// has no ingest or read route wired up on either side of the API yet,
+    /// see `apps/game-mgr/frontend`'s module doc comment.
     pub async fn folder_health(&self, spec: &SyncFolderSpec) -> Result<FolderHealth> {
         let folder = self.folder(&spec.folder_id).await?;
         let completion = self.completion(&spec.folder_id).await.unwrap_or(0.0);

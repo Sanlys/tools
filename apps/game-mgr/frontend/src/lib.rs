@@ -10,10 +10,13 @@
 //! (catalog + per-game session history), **Machines** (registration +
 //! last-seen), **Profiles** (list/create/rename/transfer), **Settings**
 //! (signed-in identity). There is no separate "Sync health" view: the
-//! backend's API only ever grew a *write* side for per-folder sync status
-//! (`PUT /machines/{id}/sync-status`, ingest-only) -- nothing reads it back,
-//! so there is nothing yet for a view to display; the Machines tab notes
-//! this rather than inventing a client-side aggregate the API can't back.
+//! `sync_status` table exists in the backend's schema
+//! (`apps/game-mgr/backend/migrations/0001_init.sql`) and
+//! `game_mgr_core::syncthing::folder_health` can already compute the data
+//! for it, but no route (ingest or read) has actually been wired up yet on
+//! either side -- so there is nothing yet for a view to display; the
+//! Machines tab notes this rather than inventing a client-side aggregate
+//! the API can't back.
 
 use std::collections::BTreeMap;
 

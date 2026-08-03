@@ -99,6 +99,24 @@ deployed `https://hello.k8s.lysakermoen.com` (what the shipped release
 binary should point at out of the box) rather than localhost, so skipping
 it here means you're not testing against what you just started in step 3.
 
+The portal itself has the same kind of native build, `portal-desktop` --
+the whole unified app (every panel, sign-in included) in a native window
+instead of a browser tab, built and shipped for end users the same way
+`hello-standalone` is (see `.github/workflows/release.yml`'s `desktop`
+job). Same idea locally:
+
+```sh
+PORTAL_API_BASE_URL=http://localhost:8080 cargo run -p portal-frontend --bin portal-desktop
+```
+
+Same reasoning as `HELLO_API_BASE_URL` above: skip the env var and this
+talks to the real deployed `https://portal.k8s.lysakermoen.com` instead of
+your local `portal-backend` from step 3. Signing in reuses the "portal"
+client_id's native loopback-redirect flow (`native: true` in
+`IDP_CLIENTS_JSON`/`dev_clients.json`) -- your default system browser opens
+to complete the passkey ceremony, then hands control back to the native
+window, same as `hello-standalone`'s own sign-in.
+
 Standalone wasm build (what `hello.k8s.lysakermoen.com` actually serves in
 prod):
 

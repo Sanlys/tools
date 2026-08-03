@@ -219,11 +219,7 @@ pub async fn watch_session(
     }
 
     let ended_at = OffsetDateTime::now_utc();
-    // did anything outlive the direct child?
-    let end_reason = if exit_code.is_some() && tracked.len() <= 1 {
-        SessionEndReason::Exited
-    } else if exit_code.is_some() {
-        // detached processes were part of the session at some point
+    let end_reason = if exit_code.is_some() {
         SessionEndReason::Exited
     } else {
         SessionEndReason::TreeDrained

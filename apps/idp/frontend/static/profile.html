@@ -81,9 +81,21 @@
   async function revokeSession(id) {
     try {
       await api('/api/sessions/' + id, { method: 'DELETE' });
-      await loadSessions();
     } catch (err) {
       showError(err);
+      return;
+    }
+    try {
+      await loadSessions();
+    } catch (err) {
+      // Revoking succeeded, but the follow-up reload now fails -- almost
+      // certainly because `id` was this page's own currently-active
+      // session, so the cookie every other call on this page relies on
+      // is now gone. Redirect the same way "Sign out everywhere" already
+      // does, rather than silently stranding the user on a page where
+      // every subsequent action (save profile, add passkey, ...) would
+      // just throw the same "not logged in" error with no way out.
+      window.location.href = '/login';
     }
   }
 

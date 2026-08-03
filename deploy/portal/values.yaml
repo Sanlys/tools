@@ -25,9 +25,11 @@ resources:
     memory: 128Mi
 env:
   # This app's own sign-in state (client_id "portal", see
-  # deploy/idp/values.yaml's IDP_CLIENTS_JSON) -- gates portal-native
-  # features only, not other tools' panels. See
-  # crates/adapters/auth's docs and apps/portal/frontend/src/lib.rs.
+  # deploy/idp/values.yaml's IDP_CLIENTS_JSON) -- backs both the wasm
+  # build's top-bar login and the portal-desktop native build's own
+  # sign-in, plus the "Account" panel on either. Doesn't gate other tools'
+  # panels. See crates/adapters/auth's docs and
+  # apps/portal/frontend/src/lib.rs.
   - name: IDP_ISSUER_URL
     value: "https://idp.k8s.lysakermoen.com"
   - name: AUTH_CLIENT_ID
@@ -66,6 +68,17 @@ env:
           "health_path": "/health",
           "k8s_namespace": "tools-game-mgr",
           "k8s_deployment": "tools-game-mgr",
+          "requires_role": null
+        },
+        {
+          "id": "idp",
+          "name": "IDP",
+          "description": "The platform's own OIDC provider + WebAuthn passkey login -- link-out only, no portal panel (the portal's own \"Account\" panel already covers profile/passkeys/sessions/admin, see docs/architecture.md's Auth section).",
+          "standalone_url": "https://idp.k8s.lysakermoen.com",
+          "api_base_url": "https://idp.k8s.lysakermoen.com",
+          "health_path": "/health",
+          "k8s_namespace": "tools-idp",
+          "k8s_deployment": "tools-idp",
           "requires_role": null
         }
       ]

@@ -1,11 +1,17 @@
 //! Read-only Kubernetes client for the dashboard's Deployment-readiness
 //! check.
 //!
-//! This is intentionally narrow: it only ever *reads* Deployment status. The
-//! portal backend's ServiceAccount is bound to a `ClusterRole` scoped to
-//! `get`/`list`/`watch` on `deployments` only (see
-//! `deploy/charts/tool-library/templates/dashboard-rbac.yaml`) -- nothing in
-//! this crate needs write access to the cluster.
+//! This is intentionally narrow: it only ever *reads* Deployment status, and
+//! the RBAC backing it is namespace-scoped, not cluster-wide -- there is no
+//! `ClusterRole` anywhere for this. Each tool that wants to appear in the
+//! dashboard opts in individually via its own `dashboardGrant` in that
+//! tool's own `values.yaml`, which grants the portal's ServiceAccount a
+//! namespaced `Role`/`RoleBinding` (`get`/`list`/`watch` on `deployments`
+//! only) inside *that tool's own namespace* -- see
+//! `deploy/charts/tool-library/templates/_rbac.tpl` and
+//! `docs/architecture.md`'s "Dashboard RBAC" note. Nothing in this crate
+//! needs write access to the cluster, or access to any namespace whose
+//! tool hasn't explicitly granted it.
 
 use api_types::K8sReadiness;
 use k8s_openapi::api::apps::v1::Deployment;

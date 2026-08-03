@@ -4,6 +4,14 @@ use uuid::Uuid;
 
 use crate::error::AppError;
 
+/// How long a first-party IDP session lasts, both server-side (`sessions.expires_at`,
+/// checked by `get_session`) and in the `session` cookie's own `max_age` (see
+/// `routes/passkey.rs`'s two cookie-issuing sites) -- kept as one constant so
+/// the two can't silently drift apart again (a cookie with no `max_age` is a
+/// browser-session-only cookie, cleared on browser close regardless of how
+/// long the server would still have accepted it).
+pub const SESSION_TTL_HOURS: i64 = 24;
+
 // ── Domain types ──────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
@@ -564,7 +572,7 @@ pub async fn create_session(
 ) -> Result<Session, AppError> {
     let id = Uuid::new_v4().to_string();
     let now = Utc::now();
-    let expires_at = now + chrono::Duration::hours(24);
+    let expires_at = now + chrono::Duration::hours(SESSION_TTL_HOURS);
     sqlx::query(
         "INSERT INTO sessions (id, user_id, created_at, expires_at, last_seen_at, user_agent, ip_address) \
          VALUES ($1, $2, $3, $4, $5, $6, $7)",
