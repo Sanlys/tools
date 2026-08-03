@@ -9,7 +9,7 @@ nameOverride: "portal"
 fullnameOverride: ""
 image:
   repository: harbor.k8s.lysakermoen.com/tools/portal-backend
-  tag: "47ce0af46180b6aaf36a2d99b19e3f1bc8b3db6b"
+  tag: "78b46425422105d3f7defd3d21307dd46ab1ec8f"
   pullPolicy: IfNotPresent
 # See deploy/hello/values.yaml's comment -- not needed unless `tools`
 # ends up a private Harbor project.
