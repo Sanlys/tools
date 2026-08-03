@@ -62,7 +62,13 @@ pub fn write_private(path: &Path, contents: &[u8]) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
+// Both tests below assert on Unix permission bits specifically -- the
+// behavior they're testing (`write_private`'s 0600, `make_executable`'s
+// exec bits) genuinely doesn't exist in the same form on Windows, see this
+// module's own `#[cfg(windows)]` variants' doc comments above. The whole
+// module is Unix-only rather than just the individual `#[test]`s so an
+// unused `use super::*` doesn't warn on other platforms.
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;

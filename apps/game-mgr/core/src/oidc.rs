@@ -405,10 +405,15 @@ mod tests {
         let bearer = provider.bearer().await.unwrap();
         assert_eq!(bearer, "new-access");
 
-        // persisted to disk with private permissions
-        use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(&store).unwrap().permissions().mode();
-        assert_eq!(mode & 0o777, 0o600);
+        // persisted to disk with private permissions (Unix only -- see
+        // crate::platform's `#[cfg(windows)]` `write_private` doc comment on
+        // why there's no equivalent enforced-permissions assertion here yet)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&store).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
         let stored: StoredTokens = serde_json::from_slice(&std::fs::read(&store).unwrap()).unwrap();
         assert_eq!(stored.refresh_token.as_deref(), Some("new-refresh"));
     }
