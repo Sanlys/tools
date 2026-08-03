@@ -152,11 +152,97 @@ fn mock_idp() -> &'static MockIdp {
     })
 }
 
-/// Full router wired to the given pool and the mock IDP above.
+/// A client that never actually connects until a request is sent -- fine
+/// for the many tests here that never touch `/artifacts/*`; those that do
+/// use [`TestBucket`] + [`app_with_s3`] instead.
+fn inert_s3_client() -> aws_sdk_s3::Client {
+    let config = aws_sdk_s3::Config::builder()
+        .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+        .region(aws_sdk_s3::config::Region::new("us-east-1"))
+        .endpoint_url("http://localhost:0")
+        .credentials_provider(aws_sdk_s3::config::Credentials::new(
+            "test", "test", None, None, "test",
+        ))
+        .force_path_style(true)
+        .build();
+    aws_sdk_s3::Client::from_conf(config)
+}
+
+/// Full router wired to the given pool and the mock IDP above, with an S3
+/// client that's never actually dialed.
 pub fn app(pool: PgPool) -> Router {
+    app_with_s3(pool, inert_s3_client(), "gamemgr-test".to_string())
+}
+
+/// Full router wired to a real S3-compatible bucket -- for `/artifacts/*`
+/// tests, see [`TestBucket`].
+pub fn app_with_s3(pool: PgPool, s3: aws_sdk_s3::Client, bucket: String) -> Router {
     let idp = mock_idp();
     let auth = AuthState::new(idp.issuer_url.clone(), TEST_CLIENT_ID);
-    game_mgr_backend::api::router(AppState { db: pool, auth })
+    game_mgr_backend::api::router(AppState {
+        db: pool,
+        auth,
+        s3,
+        bucket,
+    })
+}
+
+/// A throwaway bucket on the S3-compatible endpoint from `GM_S3_TEST_*`
+/// (MinIO in CI, your RGW locally) for `/artifacts/*` tests -- gated like
+/// [`TestDb`]: skipped without `GM_S3_TEST_ENDPOINT`; `GM_REQUIRE_S3_TESTS`
+/// makes skipping a failure (CI).
+pub struct TestBucket {
+    pub client: aws_sdk_s3::Client,
+    pub name: String,
+}
+
+impl TestBucket {
+    /// `None` = skipped.
+    pub async fn create() -> Option<TestBucket> {
+        let Ok(endpoint) = std::env::var("GM_S3_TEST_ENDPOINT") else {
+            if std::env::var("GM_REQUIRE_S3_TESTS").is_ok() {
+                panic!("GM_REQUIRE_S3_TESTS is set but GM_S3_TEST_ENDPOINT is missing");
+            }
+            eprintln!("skipping S3 test: GM_S3_TEST_ENDPOINT not set (see docs/s3-buckets.md)");
+            return None;
+        };
+        let access_key =
+            std::env::var("GM_S3_TEST_ACCESS_KEY").unwrap_or_else(|_| "gamemgr".to_string());
+        let secret_key =
+            std::env::var("GM_S3_TEST_SECRET_KEY").unwrap_or_else(|_| "gamemgr-secret".to_string());
+
+        let config = aws_sdk_s3::Config::builder()
+            .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+            .region(aws_sdk_s3::config::Region::new("us-east-1"))
+            .endpoint_url(&endpoint)
+            .credentials_provider(aws_sdk_s3::config::Credentials::new(
+                access_key, secret_key, None, None, "gm-test",
+            ))
+            .force_path_style(true)
+            .build();
+        let client = aws_sdk_s3::Client::from_conf(config);
+
+        let name = format!("gm-test-{}", Uuid::new_v4().simple());
+        client
+            .create_bucket()
+            .bucket(&name)
+            .send()
+            .await
+            .expect("create test bucket");
+
+        Some(TestBucket { client, name })
+    }
+
+    pub async fn put(&self, key: &str, bytes: Vec<u8>) {
+        self.client
+            .put_object()
+            .bucket(&self.name)
+            .key(key)
+            .body(bytes.into())
+            .send()
+            .await
+            .expect("put test object");
+    }
 }
 
 fn sign(sub: &str) -> String {

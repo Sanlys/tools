@@ -362,15 +362,6 @@ async fn core_main(
         Ok(client) => Ok(Arc::new(client)),
         Err(err) => Err(format!("{err:#}")),
     };
-    let services = Arc::new(Services {
-        http: reqwest::Client::new(),
-        s3: crate::s3::S3Client::from_config(&config.s3).map(Arc::new),
-        syncthing,
-        library_dir: crate::paths::library_dir(&config),
-        tools_dir: crate::paths::tools_dir(),
-        downloads_dir: crate::paths::downloads_dir(),
-        config: config.clone(),
-    });
 
     let token = provider_from_config(&config);
     let server =
@@ -384,6 +375,16 @@ async fn core_main(
                     None
                 }
             });
+
+    let services = Arc::new(Services {
+        http: reqwest::Client::new(),
+        server: server.clone(),
+        syncthing,
+        library_dir: crate::paths::library_dir(&config),
+        tools_dir: crate::paths::tools_dir(),
+        downloads_dir: crate::paths::downloads_dir(),
+        config: config.clone(),
+    });
 
     let machine_id = machine_id(&db).await;
     let machine_name = machine_name(&db).await;
@@ -751,17 +752,17 @@ fn spawn_catalog_fetch(state: &CoreState, events: &mpsc::UnboundedSender<CoreEve
 }
 
 /// List + read sidecars for the Add/Edit Game picker — instant, no
-/// streaming of game data.
+/// streaming of game data. Goes through the backend (`ServerClient::scan`),
+/// never the bucket directly (PLAN.md §4.3).
 fn spawn_scan(state: &mut CoreState, prefix: String, events: &mpsc::UnboundedSender<CoreEvent>) {
-    let Some(s3) = state.services.s3.clone() else {
-        state.last_error =
-            Some("S3 is not configured — set GM_S3_* (see docs/dev-setup.md)".into());
+    let Some(server) = state.server.clone() else {
+        state.last_error = Some("no server configured".into());
         return;
     };
     let events = events.clone();
     tokio::spawn(async move {
         let _ = events.send(CoreEvent::Activity(Some(format!("scanning {prefix}…"))));
-        match crate::scan::scan_prefix(&s3, &prefix).await {
+        match crate::scan::scan_prefix(&server, &prefix).await {
             Ok(files) => {
                 let _ = events.send(CoreEvent::ScanFinished(ScanResult { prefix, files }));
             }
@@ -783,7 +784,7 @@ fn spawn_submit_game(
         state.last_error = Some("no server configured".into());
         return;
     };
-    let s3 = state.services.s3.clone();
+    let http = state.services.http.clone();
     let events = events.clone();
 
     tokio::spawn(async move {
@@ -794,7 +795,7 @@ fn spawn_submit_game(
                     Some(sha) => (sha.clone(), artifact.size),
                     None => {
                         // no sidecar in the bucket — fall back to streaming
-                        let s3 = s3.as_ref().with_context_missing_s3()?;
+                        // a presigned download and hashing it as it goes
                         let events_for_progress = events.clone();
                         let key = artifact.bucket_key.clone();
                         let progress = ProgressSink::new(move |p| {
@@ -810,9 +811,14 @@ fn spawn_submit_game(
                                 )));
                             }
                         });
-                        let (sha, size) = s3
-                            .hash_object(&artifact.bucket_key, &progress, &CancellationToken::new())
-                            .await?;
+                        let (sha, size) = crate::s3::stream_and_hash(
+                            &http,
+                            &server,
+                            &artifact.bucket_key,
+                            &progress,
+                            &CancellationToken::new(),
+                        )
+                        .await?;
                         (sha, Some(size as i64))
                     }
                 };
@@ -858,21 +864,6 @@ fn spawn_submit_game(
             let _ = events.send(CoreEvent::TaskFailed(format!("submit game: {err:#}")));
         }
     });
-}
-
-trait MissingS3Context<T> {
-    fn with_context_missing_s3(self) -> anyhow::Result<T>;
-}
-
-impl<T> MissingS3Context<T> for Option<T> {
-    fn with_context_missing_s3(self) -> anyhow::Result<T> {
-        self.ok_or_else(|| {
-            anyhow::anyhow!(
-                "an artifact has no .sha256 sidecar and S3 is not configured for \
-                 fallback hashing — upload sidecars (docs/uploading-game-data.md)"
-            )
-        })
-    }
 }
 
 async fn stored_options(state: &CoreState, game_id: &str) -> InstallOptions {

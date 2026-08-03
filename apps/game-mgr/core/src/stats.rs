@@ -5,8 +5,9 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use game_mgr_api_types::{
-    BatchResponse, EventsBatchRequest, GameDefinition, GameDto, MeResponse, ProfileDto,
-    RegisterMachineRequest, SessionDto, SessionsBatchRequest, UpsertGameRequest,
+    BatchResponse, DownloadUrlResponse, EventsBatchRequest, GameDefinition, GameDto, MeResponse,
+    ProfileDto, RegisterMachineRequest, ScannedObjectDto, SessionDto, SessionsBatchRequest,
+    UpsertGameRequest,
 };
 use uuid::Uuid;
 
@@ -112,6 +113,44 @@ impl ServerClient {
             Some(req),
         )
         .await
+    }
+
+    /// List a bucket prefix, sidecars already resolved to `sha256` server-side
+    /// (see `apps/game-mgr/backend/src/api/artifacts.rs`) -- the client never
+    /// talks to S3 directly. `prefix`/`key` are query-encoded here (not via
+    /// `request`'s plain path string) since bucket keys routinely contain
+    /// characters like spaces and parens (the bucket layout convention's own
+    /// `setup_baldurs_gate_3_(89470).exe` example).
+    pub async fn scan(&self, prefix: &str) -> Result<Vec<ScannedObjectDto>> {
+        let mut url = self.url("api/v1/artifacts/scan")?;
+        url.query_pairs_mut().append_pair("prefix", prefix);
+        self.get_query(url).await
+    }
+
+    /// A short-lived presigned GET for one bucket object (PLAN.md §4.3) --
+    /// callers fetch it directly over plain HTTPS, no further
+    /// authentication needed, and request a fresh one if a download outlives
+    /// `expires_in_s` (see `crate::s3`).
+    pub async fn download_url(&self, key: &str) -> Result<DownloadUrlResponse> {
+        let mut url = self.url("api/v1/artifacts/download-url")?;
+        url.query_pairs_mut().append_pair("key", key);
+        self.get_query(url).await
+    }
+
+    async fn get_query<T: serde::de::DeserializeOwned>(&self, url: reqwest::Url) -> Result<T> {
+        let bearer = self.token.bearer().await?;
+        let response = self
+            .http
+            .get(url.clone())
+            .bearer_auth(bearer)
+            .send()
+            .await?;
+        let status = response.status();
+        if !status.is_success() {
+            let text = response.text().await.unwrap_or_default();
+            anyhow::bail!("server {url} answered {status}: {text}");
+        }
+        Ok(response.json().await?)
     }
 
     pub async fn register_machine(
@@ -422,5 +461,74 @@ mod tests {
         let stats = drain_spool(&db, &server).await.unwrap();
         assert_eq!(stats.sessions_uploaded, 2);
         assert!(db.sessions_pending(10).await.unwrap().is_empty());
+    }
+
+    /// The `prefix`/`key` query params must reach the server correctly
+    /// encoded -- the bucket layout convention's own filenames routinely
+    /// have spaces and parens in them (`setup_baldurs_gate_3_(89470).exe`).
+    #[tokio::test]
+    async fn scan_and_download_url_encode_query_params() {
+        let seen_query = Arc::new(Mutex::new(None::<String>));
+        let scan_query = seen_query.clone();
+        let download_query = seen_query.clone();
+
+        let app = axum::Router::new()
+            .route(
+                "/api/v1/artifacts/scan",
+                axum::routing::get(move |uri: axum::http::Uri| {
+                    let seen = scan_query.clone();
+                    async move {
+                        *seen.lock().unwrap() = uri.query().map(String::from);
+                        axum::Json(vec![game_mgr_api_types::ScannedObjectDto {
+                            key: "gog/bg3/setup_baldurs_gate_3_(89470).exe".into(),
+                            size: 42,
+                            sha256: Some("ab".repeat(32)),
+                        }])
+                    }
+                }),
+            )
+            .route(
+                "/api/v1/artifacts/download-url",
+                axum::routing::get(move |uri: axum::http::Uri| {
+                    let seen = download_query.clone();
+                    async move {
+                        *seen.lock().unwrap() = uri.query().map(String::from);
+                        axum::Json(DownloadUrlResponse {
+                            url: "https://s3.example.com/signed".into(),
+                            expires_in_s: 900,
+                        })
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let server = ServerClient::new(
+            &format!("http://{addr}/"),
+            Arc::new(StaticToken("tok".into())),
+        )
+        .unwrap();
+
+        let files = server
+            .scan("gog/bg3_(deluxe)/")
+            .await
+            .expect("scan succeeds");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].sha256.as_deref(), Some("ab".repeat(32).as_str()));
+        assert_eq!(
+            seen_query.lock().unwrap().as_deref(),
+            Some("prefix=gog%2Fbg3_%28deluxe%29%2F")
+        );
+
+        let download = server
+            .download_url("gog/bg3/setup_baldurs_gate_3_(89470).exe")
+            .await
+            .expect("download_url succeeds");
+        assert_eq!(download.url, "https://s3.example.com/signed");
+        assert_eq!(
+            seen_query.lock().unwrap().as_deref(),
+            Some("key=gog%2Fbg3%2Fsetup_baldurs_gate_3_%2889470%29.exe")
+        );
     }
 }

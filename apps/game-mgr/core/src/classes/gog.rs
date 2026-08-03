@@ -334,7 +334,7 @@ impl GameClass for GogGame {
         anyhow::ensure!(
             !self.artifacts.is_empty(),
             "{} has no artifacts — scan its bucket prefix in Edit game \
-             (see docs/uploading-game-data.md)",
+             (see docs/game-mgr-buckets.md)",
             self.meta.id
         );
         let base_exe = self.base_exe()?;
@@ -457,7 +457,7 @@ mod tests {
             services: Arc::new(Services {
                 config: ClientConfig::default(),
                 http: reqwest::Client::new(),
-                s3: None,
+                server: None,
                 syncthing: Err("unused".into()),
                 library_dir: root.join("lib"),
                 tools_dir: root.join("tools"),

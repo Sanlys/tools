@@ -18,10 +18,12 @@ path = "src/main.rs"
 [dependencies]
 anyhow = { workspace = true }
 auth-adapter = { workspace = true, features = ["backend"] }
+aws-sdk-s3 = { workspace = true }
 axum = { workspace = true }
 game-mgr-api-types = { workspace = true }
 metrics-adapter = { workspace = true }
 postgres-adapter = { workspace = true }
+s3-adapter = { workspace = true }
 semver = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -35,9 +37,11 @@ uuid = { workspace = true }
 
 [dev-dependencies]
 base64 = { workspace = true }
+hex = { workspace = true }
 http-body-util = { workspace = true }
 jsonwebtoken = { workspace = true }
 rand = { workspace = true }
 reqwest = { workspace = true }
 rsa = { workspace = true }
+sha2 = { workspace = true }
 tower = { workspace = true }

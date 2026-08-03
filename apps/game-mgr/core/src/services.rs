@@ -5,15 +5,18 @@ use std::sync::Arc;
 
 use crate::config::ClientConfig;
 use crate::game::GameDirs;
-use crate::s3::S3Client;
+use crate::stats::ServerClient;
 use crate::syncthing::SyncthingClient;
 
 pub struct Services {
     pub config: ClientConfig,
     pub http: reqwest::Client,
-    /// `None` when S3 is not configured; steps that need it fail with a
-    /// pointer to the missing `GM_S3_*` settings.
-    pub s3: Option<Arc<S3Client>>,
+    /// `None` when no server is configured; steps that need bucket access
+    /// (downloads, sidecar-less hashing) fail with a pointer to the missing
+    /// `server_url` setting. There is no client-side S3 config anymore --
+    /// every bucket access goes through the backend (PLAN.md §4.3, see
+    /// `crate::s3`'s module doc).
+    pub server: Option<Arc<ServerClient>>,
     /// `Err` carries the reason syncthing is unavailable. Installs are
     /// fail-fast on this (decision: syncthing is required).
     pub syncthing: Result<Arc<SyncthingClient>, String>,
@@ -23,11 +26,11 @@ pub struct Services {
 }
 
 impl Services {
-    pub fn s3(&self) -> anyhow::Result<&S3Client> {
-        self.s3.as_deref().ok_or_else(|| {
+    pub fn server(&self) -> anyhow::Result<&ServerClient> {
+        self.server.as_deref().ok_or_else(|| {
             anyhow::anyhow!(
-                "S3 is not configured — set GM_S3_ENDPOINT, GM_S3_BUCKET, \
-                 GM_S3_ACCESS_KEY_ID and GM_S3_SECRET_ACCESS_KEY (see docs/dev-setup.md)"
+                "no server configured -- bucket access needs `server_url` set \
+                 (see docs/dev-setup.md)"
             )
         })
     }

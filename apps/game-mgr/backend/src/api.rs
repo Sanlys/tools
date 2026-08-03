@@ -4,6 +4,7 @@
 //! -- same pattern as `apps/hello/backend`. Handlers stay thin; SQL lives
 //! in [`crate::repo`].
 
+mod artifacts;
 mod catalog;
 mod ingest;
 mod machines;
@@ -26,6 +27,8 @@ use crate::error::ApiError;
 pub struct AppState {
     pub db: PgPool,
     pub auth: AuthState,
+    pub s3: aws_sdk_s3::Client,
+    pub bucket: String,
 }
 
 impl FromRef<AppState> for AuthState {
@@ -96,6 +99,8 @@ fn api_v1() -> Router<AppState> {
         .route("/sessions", get(ingest::list_sessions))
         .route("/sessions:batch", post(ingest::sessions_batch))
         .route("/events:batch", post(ingest::events_batch))
+        .route("/artifacts/scan", get(artifacts::scan))
+        .route("/artifacts/download-url", get(artifacts::download_url))
         .fallback(api_not_found)
 }
 
@@ -159,14 +164,28 @@ mod tests {
     /// A pool that never actually connects (`connect_lazy` defers dialing
     /// until first query) -- fine for the tests below, none of which touch
     /// the database; DB-backed behaviour is covered in `tests/` against a
-    /// real Postgres service container.
+    /// real Postgres service container. Building an `aws_sdk_s3::Client`
+    /// from an explicit `Config` is likewise lazy -- no I/O until a request
+    /// is actually sent, same reasoning as `connect_lazy` above; none of the
+    /// tests below hit `/artifacts/*`, so this endpoint is never dialed.
     fn test_state() -> AppState {
         let db = sqlx::postgres::PgPoolOptions::new()
             .connect_lazy("postgres://gamemgr:gamemgr@localhost:5432/gamemgr")
             .expect("connect_lazy never fails eagerly");
+        let s3_config = aws_sdk_s3::Config::builder()
+            .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+            .region(aws_sdk_s3::config::Region::new("us-east-1"))
+            .endpoint_url("http://localhost:0")
+            .credentials_provider(aws_sdk_s3::config::Credentials::new(
+                "test", "test", None, None, "test",
+            ))
+            .force_path_style(true)
+            .build();
         AppState {
             db,
             auth: AuthState::new("http://localhost:4000", "game-mgr"),
+            s3: aws_sdk_s3::Client::from_conf(s3_config),
+            bucket: "gamemgr-test".to_string(),
         }
     }
 

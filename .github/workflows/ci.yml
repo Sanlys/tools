@@ -11,10 +11,12 @@ env:
 jobs:
   rust:
     runs-on: ubuntu-latest
-    # Real service for game-mgr-backend's gated DB integration suites
-    # (tests/api_e2e.rs, tests/repo_db.rs -- PLAN.md §15, carried over from
-    # game-mgr's own CI). Harmless to every other crate: nothing else in
-    # this workspace reads DATABASE_URL from a test.
+    # Real services for game-mgr-backend's gated Postgres/S3 integration
+    # suites (tests/api_e2e.rs, tests/repo_db.rs -- PLAN.md §15, carried over
+    # from game-mgr's own CI; the S3 side moved here from game-mgr-core when
+    # bucket access moved server-side, see apps/game-mgr/backend/src/api/
+    # artifacts.rs). Harmless to every other crate: nothing else in this
+    # workspace reads DATABASE_URL/GM_S3_TEST_* from a test.
     services:
       postgres:
         image: postgres:16
@@ -56,10 +58,11 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
 
       # MinIO from its first-party registry (S3 stand-in for
-      # game-mgr-core's tests/s3_minio.rs; tests create their own buckets).
-      # Plain `docker run`, not a GitHub service container: those can't
-      # pass a command, and MinIO needs `server /data`.
-      - name: start MinIO (S3 stand-in for game-mgr-core's S3 tests)
+      # game-mgr-backend's tests/api_e2e.rs artifact tests; each test
+      # creates its own throwaway bucket, see tests/common/mod.rs's
+      # TestBucket). Plain `docker run`, not a GitHub service container:
+      # those can't pass a command, and MinIO needs `server /data`.
+      - name: start MinIO (S3 stand-in for game-mgr-backend's artifact tests)
         run: |
           docker run -d --name minio -p 9000:9000 \
             -e MINIO_ROOT_USER=gamemgr -e MINIO_ROOT_PASSWORD=gamemgr-secret \

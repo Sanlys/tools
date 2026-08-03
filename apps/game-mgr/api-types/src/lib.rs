@@ -121,6 +121,34 @@ pub struct ArtifactDto {
     pub dlc_name: Option<String>,
 }
 
+// ---------------------------------------------------------------------------
+// Bucket access (PLAN.md §4.3) -- the desktop client never holds bucket
+// credentials; it goes through these two backend-mediated endpoints
+// instead. See `apps/game-mgr/backend`'s `api::artifacts` module.
+// ---------------------------------------------------------------------------
+
+/// One object found under a scanned bucket prefix (`GET
+/// /api/v1/artifacts/scan`). `sha256` is already resolved server-side from
+/// a `<key>.sha256` sidecar object, if one exists next to it -- the client
+/// only has to stream + hash a file itself when this is `None`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScannedObjectDto {
+    pub key: String,
+    pub size: i64,
+    pub sha256: Option<String>,
+}
+
+/// A short-lived, single-object presigned URL (`GET
+/// /api/v1/artifacts/download-url`) -- a plain HTTPS GET (with an optional
+/// `Range` header for resuming) against `url` needs no further
+/// authentication or bucket credentials. Request a fresh one if a download
+/// outlives `expires_in_s`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DownloadUrlResponse {
+    pub url: String,
+    pub expires_in_s: u64,
+}
+
 /// A title as stored on the server and consumed by clients. `config` is the
 /// class-specific block (e.g. `GogConfig`), opaque to the server.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -347,6 +375,37 @@ mod tests {
             }],
         };
         let back: BatchResponse =
+            serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
+        assert_eq!(r, back);
+    }
+
+    #[test]
+    fn scanned_object_roundtrips_with_and_without_sidecar() {
+        let with_hash = ScannedObjectDto {
+            key: "gog/bg3/setup.exe".into(),
+            size: 12345,
+            sha256: Some("ab".repeat(32)),
+        };
+        let back: ScannedObjectDto =
+            serde_json::from_str(&serde_json::to_string(&with_hash).unwrap()).unwrap();
+        assert_eq!(with_hash, back);
+
+        let without_hash = ScannedObjectDto {
+            sha256: None,
+            ..with_hash
+        };
+        let back: ScannedObjectDto =
+            serde_json::from_str(&serde_json::to_string(&without_hash).unwrap()).unwrap();
+        assert_eq!(without_hash, back);
+    }
+
+    #[test]
+    fn download_url_response_roundtrips() {
+        let r = DownloadUrlResponse {
+            url: "https://s3.example.com/games/gog/bg3/setup.exe?X-Amz-Signature=...".into(),
+            expires_in_s: 900,
+        };
+        let back: DownloadUrlResponse =
             serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
         assert_eq!(r, back);
     }
