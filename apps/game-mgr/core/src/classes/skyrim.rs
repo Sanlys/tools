@@ -18,7 +18,14 @@
 //! `/home` mount) and would clobber a hand-mapped drive on every launch; only
 //! `C:` (always `drive_c`) is safe.
 //!
-//! Launch is `umu-run` on `…/Skyrim MO2/ModOrganizer.exe`.
+//! Launch is `umu-run` on `…/Skyrim MO2/ModOrganizer.exe` (Linux) or that
+//! same exe run directly (Windows, via `crate::run::NativeLaunch`) — MO2 is
+//! itself Windows software either way, so Windows needs no Proton/Wine
+//! translation layer. The `C:\…` paths above are just this class's own
+//! directory layout under the per-game prefix dir; on Windows there's no
+//! real Wine prefix backing them (`EnsurePrefixStep` is a no-op there), but
+//! the same `drive_c/…` subtree still works as an ordinary install
+//! location.
 
 use std::path::PathBuf;
 
@@ -30,6 +37,7 @@ use crate::game::{
     ArtifactRef, GameClass, GameCtx, GameMeta, InstallStep, LaunchedGame, SyncFolderSpec,
     WatchHint, WatchScope, WatcherSpec,
 };
+#[cfg(not(windows))]
 use crate::run::{UmuLaunch, find_umu, resolve_proton_dir};
 use crate::steps::{
     EnsurePrefixStep, EnsureSyncFolderStep, ExtractArchiveStep, InnoExtractStep, S3FetchStep,
@@ -259,6 +267,60 @@ impl SkyrimModded {
             self.config.watch_exes.clone()
         }
     }
+
+    /// Linux: MO2 itself only runs under Wine/Proton, through umu.
+    #[cfg(not(windows))]
+    async fn spawn(&self, ctx: &GameCtx, exe: PathBuf) -> anyhow::Result<LaunchedGame> {
+        let umu = find_umu(&ctx.services)?;
+        let proton_dir = resolve_proton_dir(
+            &ctx.services,
+            ctx.proton_override.as_deref(),
+            self.config.proton_default.as_deref(),
+        );
+        tracing::info!(
+            target: "launch",
+            game = %ctx.game_id,
+            exe = %exe.display(),
+            prefix = %ctx.dirs.prefix.display(),
+            proton = ?proton_dir,
+            "launching modded skyrim via MO2",
+        );
+        let launch = UmuLaunch {
+            exe,
+            prefix: ctx.dirs.prefix.clone(),
+            proton_dir,
+            game_id: self.config.umu_id.clone(),
+            store: "gog".into(),
+        };
+        let wrapped = crate::run::wrap_command(launch.command(&umu), &ctx.launch);
+        let mut cmd = tokio::process::Command::from(wrapped);
+        cmd.stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        let mut child = cmd.spawn().context("spawning umu-run (MO2)")?;
+        crate::steps::forward_output(&mut child, "mo2", &ctx.game_id);
+        Ok(LaunchedGame { child })
+    }
+
+    /// Windows: MO2 is itself Windows software, so it runs directly -- no
+    /// Proton/Wine translation needed. Same `NativeLaunch` mechanism as
+    /// `GogGame`'s Windows launch path.
+    #[cfg(windows)]
+    async fn spawn(&self, ctx: &GameCtx, exe: PathBuf) -> anyhow::Result<LaunchedGame> {
+        tracing::info!(
+            target: "launch",
+            game = %ctx.game_id,
+            exe = %exe.display(),
+            "launching modded skyrim via MO2 (native)",
+        );
+        let launch = crate::run::NativeLaunch { exe };
+        let wrapped = crate::run::wrap_command(launch.command(), &ctx.launch);
+        let mut cmd = tokio::process::Command::from(wrapped);
+        cmd.stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        let mut child = cmd.spawn().context("spawning ModOrganizer.exe")?;
+        crate::steps::forward_output(&mut child, "mo2", &ctx.game_id);
+        Ok(LaunchedGame { child })
+    }
 }
 
 #[async_trait::async_trait]
@@ -359,40 +421,13 @@ impl GameClass for SkyrimModded {
     }
 
     async fn launch(&self, ctx: &GameCtx) -> anyhow::Result<LaunchedGame> {
-        let umu = find_umu(&ctx.services)?;
         let exe = self.mo2_exe(ctx);
         anyhow::ensure!(
             exe.is_file(),
             "Mod Organizer not found at {} — has the 'Skyrim MO2' folder finished syncing?",
             exe.display()
         );
-        let proton_dir = resolve_proton_dir(
-            &ctx.services,
-            ctx.proton_override.as_deref(),
-            self.config.proton_default.as_deref(),
-        );
-        tracing::info!(
-            target: "launch",
-            game = %ctx.game_id,
-            exe = %exe.display(),
-            prefix = %ctx.dirs.prefix.display(),
-            proton = ?proton_dir,
-            "launching modded skyrim via MO2",
-        );
-        let launch = UmuLaunch {
-            exe,
-            prefix: ctx.dirs.prefix.clone(),
-            proton_dir,
-            game_id: self.config.umu_id.clone(),
-            store: "gog".into(),
-        };
-        let wrapped = crate::run::wrap_command(launch.command(&umu), &ctx.launch);
-        let mut cmd = tokio::process::Command::from(wrapped);
-        cmd.stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
-        let mut child = cmd.spawn().context("spawning umu-run (MO2)")?;
-        crate::steps::forward_output(&mut child, "mo2", &ctx.game_id);
-        Ok(LaunchedGame { child })
+        self.spawn(ctx, exe).await
     }
 
     fn watch_hint(&self) -> Option<WatchHint> {

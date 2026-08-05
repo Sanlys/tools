@@ -45,12 +45,13 @@ impl UmuLaunch {
 }
 
 /// Everything needed to start a game directly on Windows -- no Wine/Proton
-/// translation layer, since the game's own Windows build runs natively.
-/// This is this port's first Windows launch-layer slice (PLAN.md §14's
-/// `Runner` split): it covers the `GogGame` class's declarative titles
-/// (BG3 and similar); `SkyrimModded`'s MO2-orchestrated launch and the
-/// Switch-emulator class are not wired to this yet -- see
-/// `apps/game-mgr/core`'s port notes.
+/// translation layer, since the target executable runs natively (PLAN.md
+/// §14's `Runner` split). Used by both shipped classes: `GogGame`'s
+/// declarative titles (BG3 and similar) launch their own exe with this
+/// directly, and `SkyrimModded` uses it to launch MO2's `ModOrganizer.exe`
+/// (MO2 is itself Windows software). No Switch/emulator class exists in the
+/// shipped code yet (`classes.rs`: "`SwitchGame` (M4) joins later") -- there
+/// is nothing further to wire.
 #[derive(Debug, Clone)]
 pub struct NativeLaunch {
     pub exe: PathBuf,

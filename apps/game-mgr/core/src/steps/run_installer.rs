@@ -1,6 +1,7 @@
-//! Run an InnoSetup-style installer inside the game's prefix via umu —
-//! used for optional GOG patch/DLC installers selected at install time
-//! (and as the Risk-6 fallback for installers innoextract can't handle).
+//! Run an InnoSetup-style installer -- inside the game's prefix via umu on
+//! Linux, directly (no Wine/Proton) on Windows -- used for optional GOG
+//! patch/DLC installers selected at install time (and as the Risk-6
+//! fallback for installers innoextract can't handle).
 
 use std::path::PathBuf;
 
@@ -8,6 +9,7 @@ use anyhow::bail;
 use tokio_util::sync::CancellationToken;
 
 use crate::game::{GameCtx, InstallStep, Progress, ProgressSink};
+#[cfg(not(windows))]
 use crate::run::{UmuLaunch, find_umu, resolve_proton_dir};
 
 pub struct RunInstallerInPrefixStep {
@@ -49,6 +51,7 @@ impl InstallStep for RunInstallerInPrefixStep {
         Ok(self.sentinel(ctx).is_file())
     }
 
+    #[cfg(not(windows))]
     async fn run(
         &self,
         ctx: &GameCtx,
@@ -83,6 +86,42 @@ impl InstallStep for RunInstallerInPrefixStep {
         if !status.success() {
             bail!(
                 "{} exited with {status} — run it manually in the prefix to inspect",
+                self.installer.display()
+            );
+        }
+        crate::steps::write_sentinel(&self.sentinel(ctx), "applied")
+    }
+
+    /// Windows: the installer is itself Windows software, so it runs
+    /// directly -- no Wine/Proton prefix needed. Same best-effort caveat as
+    /// the Linux path: nothing forces the target directory, so the
+    /// installer relies on its own (registry-based) detection of the prior
+    /// install, same as under Wine.
+    #[cfg(windows)]
+    async fn run(
+        &self,
+        ctx: &GameCtx,
+        progress: &ProgressSink,
+        cancel: &CancellationToken,
+    ) -> anyhow::Result<()> {
+        progress.send(Progress::Message(self.label()));
+        anyhow::ensure!(
+            self.installer.is_file(),
+            "installer missing: {}",
+            self.installer.display()
+        );
+        let mut cmd = crate::run::NativeLaunch {
+            exe: self.installer.clone(),
+        }
+        .command();
+        cmd.arg("/VERYSILENT")
+            .arg("/SUPPRESSMSGBOXES")
+            .arg("/NORESTART");
+        let status =
+            crate::steps::run_logged(cmd.into(), "installer", &ctx.game_id, cancel).await?;
+        if !status.success() {
+            bail!(
+                "{} exited with {status} — run it manually to inspect",
                 self.installer.display()
             );
         }
