@@ -292,9 +292,8 @@ impl GogGame {
     }
 
     /// Windows: the game's own Windows build runs directly, no Proton/umu
-    /// translation needed. First Windows launch slice for this class --
-    /// see `crate::run::NativeLaunch`'s doc comment on scope (this class
-    /// only; `SkyrimModded`/the Switch-emulator class aren't wired yet).
+    /// translation needed. See `crate::run::NativeLaunch`'s doc comment for
+    /// which classes use this.
     #[cfg(windows)]
     async fn spawn(&self, ctx: &GameCtx, exe: std::path::PathBuf) -> anyhow::Result<LaunchedGame> {
         tracing::info!(
