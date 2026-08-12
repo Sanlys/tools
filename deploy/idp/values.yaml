@@ -16,7 +16,7 @@ nameOverride: "idp"
 fullnameOverride: ""
 image:
   repository: harbor.k8s.lysakermoen.com/tools/idp-backend
-  tag: "0e3558bb9de1f1b32c45f822fcb1037e2504201b"
+  tag: "84555e26e4218e6c2d39f5537078eb8338666260"
   pullPolicy: IfNotPresent
 imagePullSecrets: []
 replicaCount: 1
