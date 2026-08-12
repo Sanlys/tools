@@ -28,6 +28,20 @@ impl GameMgrPanel {
         ui.separator();
         ui.label(egui::RichText::new("About").strong());
         ui.label(format!("API base: {}", self.api_base_url));
+        match self.ping.ready() {
+            None => {
+                ui.label(egui::RichText::new("Backend build: loading...").weak());
+            }
+            Some(Err(err)) => {
+                ui.colored_label(
+                    egui::Color32::RED,
+                    format!("failed to load backend build info: {err}"),
+                );
+            }
+            Some(Ok(ping)) => {
+                ui.label(format!("Backend build: {} ({})", ping.version, ping.status));
+            }
+        }
         ui.label(
             egui::RichText::new(
                 "Ported from the standalone game-mgr project -- see that repo's PLAN.md for \

@@ -299,16 +299,39 @@ pub fn scan_conflicts(root: &Path) -> Vec<String> {
 
 /// Parse gui address + api key out of the local Syncthing config.xml.
 pub fn autodetect_config() -> Result<(String, String)> {
-    for candidate in config_xml_candidates() {
+    let candidates = config_xml_candidates();
+    for candidate in &candidates {
         if candidate.is_file() {
-            let xml = std::fs::read_to_string(&candidate)?;
+            let xml = std::fs::read_to_string(candidate)?;
             return parse_config_xml(&xml)
                 .with_context(|| format!("parsing {}", candidate.display()));
         }
     }
-    bail!("no syncthing config.xml found (is syncthing installed and started once?)")
+    // List every path actually checked -- "no syncthing config.xml found"
+    // alone gives no way to tell a real absence apart from this list simply
+    // being wrong for how Syncthing was installed (see this fn's other
+    // comments); GM_SYNCTHING_URL/GM_SYNCTHING_API_KEY (SyncthingConfig)
+    // remain the escape hatch either way.
+    let tried = candidates
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    bail!(
+        "no syncthing config.xml found (checked: {tried}) -- is syncthing installed and \
+         started once? set GM_SYNCTHING_URL and GM_SYNCTHING_API_KEY to skip autodetection"
+    )
 }
 
+/// Every path Syncthing's own installers/packages are known to use for
+/// `config.xml`, across platforms and packaging -- listed low-confidence
+/// (least common) to high, since [`autodetect_config`] returns the first
+/// hit. Not just XDG on Linux: the current stable installer default
+/// per-OS is `%LocalAppData%\Syncthing` on Windows (`config_local_dir`,
+/// *not* `config_dir`, which is Roaming AppData and never holds it --
+/// `dirs::state_dir()` is also unconditionally `None` on Windows, so the
+/// pre-existing `state_dir`-based candidate silently checked nothing
+/// there at all) and `~/Library/Application Support/Syncthing` on macOS.
 fn config_xml_candidates() -> Vec<PathBuf> {
     let mut candidates = Vec::new();
     if let Some(state) = dirs::state_dir() {
@@ -316,6 +339,9 @@ fn config_xml_candidates() -> Vec<PathBuf> {
     }
     if let Some(config) = dirs::config_dir() {
         candidates.push(config.join("syncthing/config.xml"));
+    }
+    if let Some(config_local) = dirs::config_local_dir() {
+        candidates.push(config_local.join("Syncthing/config.xml"));
     }
     if let Some(home) = dirs::home_dir() {
         candidates.push(home.join(".local/state/syncthing/config.xml"));

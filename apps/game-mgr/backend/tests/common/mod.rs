@@ -182,6 +182,11 @@ pub fn app_with_s3(pool: PgPool, s3: aws_sdk_s3::Client, bucket: String) -> Rout
     game_mgr_backend::api::router(AppState {
         db: pool,
         auth,
+        // Tests presign against and then actually follow the URL against
+        // the same real (MinIO/RGW) endpoint, so `public_s3` == `s3` here
+        // -- there's no separate internal-vs-external split in a test
+        // environment the way there is against rook-ceph in the cluster.
+        public_s3: s3.clone(),
         s3,
         bucket,
     })

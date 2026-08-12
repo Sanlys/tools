@@ -15,12 +15,33 @@ COPY . .
 # target crate from cwd's Cargo.toml, and the workspace root's has no
 # `[package]` of its own. `--dist` needs an absolute path since it's
 # resolved relative to that cwd, not the repo root.
-RUN cd apps/game-mgr/frontend && trunk build --release --dist /app/dist
+#
+# Retried: trunk's first-run tool fetch (wasm-bindgen-cli/wasm-opt from
+# GitHub Releases) has turned out to be a genuinely flaky download in CI --
+# a transient failure here previously killed this app's build outright
+# (and, before release.yml's fail-fast fix, every other app's build in the
+# same push too). `trunk build` is safe to just retry: a failed attempt
+# doesn't leave `/app/dist` partially written since it errors out before
+# ever producing output.
+RUN cd apps/game-mgr/frontend && \
+    for i in 1 2 3 4 5; do \
+        trunk build --release --dist /app/dist && exit 0; \
+        echo "trunk build failed (attempt $i/5, likely a flaky GitHub Releases download) -- retrying in 10s" >&2; \
+        sleep 10; \
+    done; \
+    exit 1
 
 FROM rust:1-slim-bookworm AS backend-builder
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 COPY . .
+# Baked into `GET /api/v1/ping`'s `version` field (api::ping) so a deployed
+# build can be confirmed by eye in the Settings tab instead of guessed at --
+# release.yml passes --build-arg GIT_SHA=<commit> (the same sha the image
+# is tagged with). Unset for a local `docker build`, in which case `ping`
+# falls back to the crate's version.
+ARG GIT_SHA
+ENV GIT_SHA=$GIT_SHA
 RUN cargo build --release -p game-mgr-backend
 
 FROM debian:bookworm-slim

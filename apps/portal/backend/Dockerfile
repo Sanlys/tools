@@ -14,7 +14,20 @@ COPY . .
 # target crate from cwd's Cargo.toml, and the workspace root's has no
 # `[package]` of its own. `--dist` needs an absolute path since it's
 # resolved relative to that cwd, not the repo root.
-RUN cd apps/portal/frontend && trunk build --release --dist /app/dist
+#
+# Retried: trunk's first-run tool fetch (wasm-bindgen-cli/wasm-opt from
+# GitHub Releases) has turned out to be a genuinely flaky download in CI --
+# see apps/game-mgr/backend/Dockerfile's identical comment, where this
+# actually blocked a real deploy. Safe to retry: a failed attempt doesn't
+# leave `/app/dist` partially written, it errors out before producing
+# output.
+RUN cd apps/portal/frontend && \
+    for i in 1 2 3 4 5; do \
+        trunk build --release --dist /app/dist && exit 0; \
+        echo "trunk build failed (attempt $i/5, likely a flaky GitHub Releases download) -- retrying in 10s" >&2; \
+        sleep 10; \
+    done; \
+    exit 1
 
 FROM rust:1-slim-bookworm AS backend-builder
 WORKDIR /app

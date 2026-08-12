@@ -28,6 +28,13 @@ pub struct AppState {
     pub db: PgPool,
     pub auth: AuthState,
     pub s3: aws_sdk_s3::Client,
+    /// Same bucket, but its client is configured against the public S3
+    /// endpoint rather than rook-ceph's in-cluster service address -- for
+    /// presigning URLs handed to the desktop client (see
+    /// `api::artifacts::download_url`), which isn't running inside the
+    /// cluster and can't resolve the internal address. See
+    /// `s3_adapter::S3Config::public_endpoint`'s doc comment.
+    pub public_s3: aws_sdk_s3::Client,
     pub bucket: String,
 }
 
@@ -116,12 +123,17 @@ async fn readyz(State(state): State<AppState>) -> Result<&'static str, ApiError>
     Ok("ok")
 }
 
-async fn ping() -> Json<serde_json::Value> {
-    // version lets clients spot a stale server image (PLAN.md §15)
-    Json(serde_json::json!({
-        "status": "ok",
-        "version": env!("CARGO_PKG_VERSION"),
-    }))
+async fn ping() -> Json<game_mgr_api_types::PingResponse> {
+    // version lets clients spot a stale server image (PLAN.md §15): the
+    // deployed git commit when built via the Dockerfile's `GIT_SHA` build
+    // arg, or the crate version for a local `cargo build`/`cargo run`
+    // that never set it.
+    Json(game_mgr_api_types::PingResponse {
+        status: "ok".to_string(),
+        version: option_env!("GIT_SHA")
+            .unwrap_or(env!("CARGO_PKG_VERSION"))
+            .to_string(),
+    })
 }
 
 async fn api_not_found() -> (StatusCode, Json<serde_json::Value>) {
@@ -184,7 +196,8 @@ mod tests {
         AppState {
             db,
             auth: AuthState::new("http://localhost:4000", "game-mgr"),
-            s3: aws_sdk_s3::Client::from_conf(s3_config),
+            s3: aws_sdk_s3::Client::from_conf(s3_config.clone()),
+            public_s3: aws_sdk_s3::Client::from_conf(s3_config),
             bucket: "gamemgr-test".to_string(),
         }
     }

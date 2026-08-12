@@ -42,6 +42,14 @@ jobs:
     if: github.ref_type == 'branch'
     runs-on: ubuntu-latest
     strategy:
+      # Each app's build/deploy is independent -- a transient failure in
+      # one app's Docker build (e.g. a flaky release-archive download) has
+      # no business cancelling every other app's already-in-flight build
+      # before it gets a chance to push+bump its own deploy tag. Without
+      # this, `fail-fast`'s default (true) does exactly that: one bad
+      # build silently withholds a deploy for every OTHER app in the same
+      # push too, with no direct evidence pointing at the actual cause.
+      fail-fast: false
       matrix:
         include:
           - name: hello
@@ -83,6 +91,13 @@ jobs:
           tags: |
             ${{ vars.REGISTRY_HOST }}/tools/${{ matrix.image }}:${{ github.sha }}
             ${{ vars.REGISTRY_HOST }}/tools/${{ matrix.image }}:latest
+          # Same sha the image is tagged with -- only game-mgr's Dockerfile
+          # currently declares this ARG (baked into `GET /api/v1/ping`, see
+          # its Dockerfile), but an unused build-arg is a harmless no-op
+          # for the others rather than something worth a per-app branch
+          # here.
+          build-args: |
+            GIT_SHA=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
