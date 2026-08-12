@@ -32,6 +32,21 @@ pub enum S3ConfigError {
 pub struct S3Config {
     pub bucket_name: String,
     pub endpoint: String,
+    /// Endpoint to sign presigned URLs against, for callers that hand a
+    /// presigned URL to a client outside the cluster (e.g.
+    /// `apps/game-mgr/backend/src/api/artifacts.rs`'s `download_url`).
+    /// `endpoint` is rook-ceph's in-cluster RGW service address
+    /// (`rook-ceph-rgw-<name>.rook-ceph.svc`), which only resolves inside
+    /// the cluster -- a presigned URL built against it is dead on arrival
+    /// for any client that isn't itself a pod in this cluster. Defaults to
+    /// `endpoint` when `BUCKET_PUBLIC_ENDPOINT` isn't set, so tools that
+    /// only ever use their S3 client from inside the cluster (no external
+    /// presigned URLs) don't need to configure anything extra. Presigning
+    /// is pure local HMAC signing, no request is sent, so building a
+    /// client against an endpoint the backend itself can't necessarily
+    /// reach is fine -- only the resulting client that will follow the
+    /// URL needs it to resolve.
+    pub public_endpoint: String,
     pub region: String,
     pub access_key_id: String,
     pub secret_access_key: String,
@@ -48,6 +63,10 @@ impl S3Config {
     /// Scheme is chosen from `BUCKET_PORT`: 443 implies `https`, anything
     /// else implies `http` (rook-ceph's in-cluster RGW service is plain HTTP
     /// by default). Set `S3_FORCE_HTTPS=1` to override.
+    ///
+    /// `BUCKET_PUBLIC_ENDPOINT` is optional -- see `public_endpoint`'s doc
+    /// comment. Set it to a full base URL (e.g.
+    /// `https://s3.k8s.lysakermoen.com`), not just a host.
     pub fn from_env() -> Result<Self, S3ConfigError> {
         let host = require_env("BUCKET_HOST")?;
         let port_str = require_env("BUCKET_PORT")?;
@@ -66,14 +85,29 @@ impl S3Config {
             "http"
         };
         let endpoint = format!("{scheme}://{host}:{port}");
+        let public_endpoint = env::var("BUCKET_PUBLIC_ENDPOINT")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| endpoint.clone());
 
         Ok(Self {
             bucket_name,
             endpoint,
+            public_endpoint,
             region,
             access_key_id,
             secret_access_key,
         })
+    }
+
+    fn credentials(&self) -> Credentials {
+        Credentials::new(
+            self.access_key_id.clone(),
+            self.secret_access_key.clone(),
+            None,
+            None,
+            "rook-ceph-obc",
+        )
     }
 }
 
@@ -81,21 +115,31 @@ fn require_env(key: &'static str) -> Result<String, S3ConfigError> {
     env::var(key).map_err(|_| S3ConfigError::MissingEnv(key))
 }
 
-/// Builds an `aws-sdk-s3` client from an [`S3Config`]. Ceph RGW requires
-/// path-style bucket addressing, which is set unconditionally here.
+/// Builds an `aws-sdk-s3` client against `cfg.endpoint` (the in-cluster RGW
+/// address). Ceph RGW requires path-style bucket addressing, which is set
+/// unconditionally here. Use this for a tool's own listing/reading -- for a
+/// client building presigned URLs handed to something outside the cluster,
+/// see [`build_presigning_client`].
 pub fn build_client(cfg: &S3Config) -> Client {
-    let credentials = Credentials::new(
-        cfg.access_key_id.clone(),
-        cfg.secret_access_key.clone(),
-        None,
-        None,
-        "rook-ceph-obc",
-    );
+    build_client_for_endpoint(cfg, &cfg.endpoint)
+}
+
+/// Builds an `aws-sdk-s3` client against `cfg.public_endpoint` instead of
+/// `cfg.endpoint` -- for presigning URLs a client outside the cluster (e.g.
+/// a desktop app on a VPN) will actually follow. See `public_endpoint`'s
+/// doc comment on [`S3Config`]. Presigning is local HMAC signing with no
+/// network request, so it's fine for this client's endpoint to be
+/// unreachable from wherever the backend itself is running.
+pub fn build_presigning_client(cfg: &S3Config) -> Client {
+    build_client_for_endpoint(cfg, &cfg.public_endpoint)
+}
+
+fn build_client_for_endpoint(cfg: &S3Config, endpoint: &str) -> Client {
     let config = aws_sdk_s3::Config::builder()
         .behavior_version(BehaviorVersion::latest())
         .region(Region::new(cfg.region.clone()))
-        .endpoint_url(&cfg.endpoint)
-        .credentials_provider(credentials)
+        .endpoint_url(endpoint)
+        .credentials_provider(cfg.credentials())
         .force_path_style(true)
         .build();
     Client::from_conf(config)

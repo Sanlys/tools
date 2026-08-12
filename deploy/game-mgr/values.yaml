@@ -26,6 +26,14 @@ env:
     value: "https://idp.k8s.lysakermoen.com"
   - name: AUTH_CLIENT_ID
     value: "game-mgr"
+  # Presigned download URLs (api::artifacts::download_url) go to the
+  # desktop client, which runs on gaming machines outside the cluster --
+  # BUCKET_HOST from the ObjectBucketClaim (rook-ceph-rgw-*.rook-ceph.svc)
+  # only resolves in-cluster, so presigning needs this separate,
+  # publicly-resolvable S3 gateway address instead. See
+  # crates/adapters/s3's S3Config::public_endpoint doc comment.
+  - name: BUCKET_PUBLIC_ENDPOINT
+    value: "https://s3.k8s.lysakermoen.com"
 envFrom: []
 resources:
   requests:

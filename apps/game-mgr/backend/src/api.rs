@@ -28,6 +28,13 @@ pub struct AppState {
     pub db: PgPool,
     pub auth: AuthState,
     pub s3: aws_sdk_s3::Client,
+    /// Same bucket, but its client is configured against the public S3
+    /// endpoint rather than rook-ceph's in-cluster service address -- for
+    /// presigning URLs handed to the desktop client (see
+    /// `api::artifacts::download_url`), which isn't running inside the
+    /// cluster and can't resolve the internal address. See
+    /// `s3_adapter::S3Config::public_endpoint`'s doc comment.
+    pub public_s3: aws_sdk_s3::Client,
     pub bucket: String,
 }
 
@@ -184,7 +191,8 @@ mod tests {
         AppState {
             db,
             auth: AuthState::new("http://localhost:4000", "game-mgr"),
-            s3: aws_sdk_s3::Client::from_conf(s3_config),
+            s3: aws_sdk_s3::Client::from_conf(s3_config.clone()),
+            public_s3: aws_sdk_s3::Client::from_conf(s3_config),
             bucket: "gamemgr-test".to_string(),
         }
     }

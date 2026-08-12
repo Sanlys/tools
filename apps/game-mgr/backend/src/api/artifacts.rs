@@ -167,8 +167,11 @@ pub async fn download_url(
     let key = validate_key(&query.key)?;
     let presigning = PresigningConfig::expires_in(DOWNLOAD_URL_TTL)
         .map_err(|err| anyhow::anyhow!("building presigning config: {err}"))?;
+    // `public_s3`, not `s3`: this URL goes to the desktop client, which
+    // isn't inside the cluster and can't resolve rook-ceph's internal
+    // service address -- see `AppState::public_s3`'s doc comment.
     let presigned = state
-        .s3
+        .public_s3
         .get_object()
         .bucket(&state.bucket)
         .key(key)

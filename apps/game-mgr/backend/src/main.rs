@@ -21,12 +21,14 @@ async fn main() -> anyhow::Result<()> {
 
     let (s3_client, s3_cfg) =
         s3_adapter::client_from_env().map_err(|err| anyhow::anyhow!("s3 config: {err}"))?;
+    let public_s3_client = s3_adapter::build_presigning_client(&s3_cfg);
 
     let auth = AuthState::from_env("game-mgr");
     let state = AppState {
         db: pool,
         auth,
         s3: s3_client,
+        public_s3: public_s3_client,
         bucket: s3_cfg.bucket_name,
     };
 

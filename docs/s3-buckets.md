@@ -39,6 +39,25 @@ One bucket-scoped identity per app, per bucket -- this is rook's default
 OBC behavior, not something this platform adds on top. There's no shared
 platform-wide S3 credential anywhere.
 
+## Presigned URLs for clients outside the cluster
+
+`BUCKET_HOST` (from the OBC's ConfigMap) is rook-ceph's in-cluster RGW
+service address (`rook-ceph-rgw-<name>.rook-ceph.svc`), which only
+resolves inside the cluster. That's fine for a tool's own listing/reading,
+but a presigned URL built against it is dead on arrival for a client that
+isn't itself a pod here -- e.g. game-mgr's desktop client, which downloads
+via a presigned URL over a user's VPN connection (see
+`apps/game-mgr/backend/src/api/artifacts.rs`'s `download_url`).
+
+For that, set `BUCKET_PUBLIC_ENDPOINT` (a full base URL, e.g.
+`https://s3.k8s.lysakermoen.com`) alongside the OBC-sourced vars and use
+`s3_adapter::build_presigning_client` instead of `build_client` for the
+client that generates presigned URLs -- `S3Config::public_endpoint` falls
+back to the internal `endpoint` when unset, so a tool that never hands out
+presigned URLs to anything outside the cluster doesn't need to set this.
+Presigning is pure local HMAC signing (no request sent), so the backend
+doesn't need to actually be able to reach the public endpoint itself.
+
 ## Local development
 
 There's no bucket outside the cluster. `docker-compose.yml` at the repo
