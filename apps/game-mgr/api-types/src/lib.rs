@@ -12,6 +12,17 @@ use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
+/// `GET /api/v1/ping` -- unauthenticated, so the frontend can show it even
+/// before sign-in. `version` is the deployed build's git commit (or the
+/// crate's semver as a fallback for a local dev build with no `GIT_SHA`
+/// baked in -- see `apps/game-mgr/backend/Dockerfile`), displayed in the
+/// Settings tab so a deploy can be confirmed by eye rather than guessed at.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PingResponse {
+    pub status: String,
+    pub version: String,
+}
+
 // ---------------------------------------------------------------------------
 // Users & profiles (PLAN.md §8.0)
 // ---------------------------------------------------------------------------

@@ -21,6 +21,13 @@ FROM rust:1-slim-bookworm AS backend-builder
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 COPY . .
+# Baked into `GET /api/v1/ping`'s `version` field (api::ping) so a deployed
+# build can be confirmed by eye in the Settings tab instead of guessed at --
+# release.yml passes --build-arg GIT_SHA=<commit> (the same sha the image
+# is tagged with). Unset for a local `docker build`, in which case `ping`
+# falls back to the crate's version.
+ARG GIT_SHA
+ENV GIT_SHA=$GIT_SHA
 RUN cargo build --release -p game-mgr-backend
 
 FROM debian:bookworm-slim

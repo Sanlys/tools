@@ -20,7 +20,9 @@
 
 use std::collections::BTreeMap;
 
-use game_mgr_api_types::{GameDto, MachineDto, MeResponse, ProfileDto, SessionDto, UserDto};
+use game_mgr_api_types::{
+    GameDto, MachineDto, MeResponse, PingResponse, ProfileDto, SessionDto, UserDto,
+};
 use platform_config::JsonResource;
 use platform_core::{Panel, PanelId};
 use uuid::Uuid;
@@ -67,6 +69,10 @@ pub struct GameMgrPanel {
     tab: Tab,
     last_error: Option<String>,
 
+    /// `GET /api/v1/ping` -- unauthenticated, fetched unconditionally in
+    /// `tick` (not gated on sign-in) so a build can be confirmed by eye
+    /// even before logging in. See [`PingResponse`]'s doc comment.
+    ping: JsonResource<PingResponse>,
     me: JsonResource<MeResponse>,
     games: JsonResource<Vec<GameDto>>,
     machines: JsonResource<Vec<MachineDto>>,
@@ -111,6 +117,7 @@ impl GameMgrPanel {
             tried_silent_sso: false,
             tab: Tab::default(),
             last_error: None,
+            ping: JsonResource::new(),
             me: JsonResource::new(),
             games: JsonResource::new(),
             machines: JsonResource::new(),
@@ -147,6 +154,15 @@ impl GameMgrPanel {
 
     fn is_authenticated(&self) -> bool {
         self.bearer_token().is_some()
+    }
+
+    /// Short label for the deployed build, e.g. `"d4956ea88f2d"` -- `None`
+    /// while `/ping` hasn't resolved yet or failed. See [`PingResponse`].
+    fn version_label(&self) -> Option<String> {
+        match self.ping.ready() {
+            Some(Ok(ping)) => Some(ping.version.chars().take(12).collect()),
+            _ => None,
+        }
     }
 
     fn api(&self, path: &str) -> String {
@@ -213,6 +229,13 @@ impl Panel for GameMgrPanel {
     }
 
     fn tick(&mut self, ctx: &egui::Context) {
+        // Unauthenticated and unconditional -- deliberately ahead of the
+        // `is_authenticated` gate below, so the version is visible even on
+        // the pre-sign-in screen.
+        if !self.ping.has_requested() {
+            self.ping.fetch(&self.api("/api/v1/ping"));
+        }
+
         #[cfg(target_arch = "wasm32")]
         if !self.embedded {
             if !self.auth_config.has_requested() {
@@ -301,6 +324,17 @@ impl Panel for GameMgrPanel {
     fn ui(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.heading("game-mgr");
+            // Visible whether or not you're signed in -- lets a deploy be
+            // confirmed by eye without an extra click. See `version_label`.
+            match self.version_label() {
+                Some(v) => {
+                    ui.label(egui::RichText::new(format!("build {v}")).weak().small())
+                        .on_hover_text("GET /api/v1/ping -- the deployed backend's git commit");
+                }
+                None => {
+                    ui.label(egui::RichText::new("build ?").weak().small());
+                }
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 #[cfg(target_arch = "wasm32")]
                 if !self.embedded {

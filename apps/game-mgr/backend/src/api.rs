@@ -123,12 +123,17 @@ async fn readyz(State(state): State<AppState>) -> Result<&'static str, ApiError>
     Ok("ok")
 }
 
-async fn ping() -> Json<serde_json::Value> {
-    // version lets clients spot a stale server image (PLAN.md §15)
-    Json(serde_json::json!({
-        "status": "ok",
-        "version": env!("CARGO_PKG_VERSION"),
-    }))
+async fn ping() -> Json<game_mgr_api_types::PingResponse> {
+    // version lets clients spot a stale server image (PLAN.md §15): the
+    // deployed git commit when built via the Dockerfile's `GIT_SHA` build
+    // arg, or the crate version for a local `cargo build`/`cargo run`
+    // that never set it.
+    Json(game_mgr_api_types::PingResponse {
+        status: "ok".to_string(),
+        version: option_env!("GIT_SHA")
+            .unwrap_or(env!("CARGO_PKG_VERSION"))
+            .to_string(),
+    })
 }
 
 async fn api_not_found() -> (StatusCode, Json<serde_json::Value>) {
