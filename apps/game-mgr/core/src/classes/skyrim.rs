@@ -32,13 +32,22 @@
 //! hold that real Wine prefix -- see `GameDirs::prefix`'s doc comment, and
 //! `GogGame::game_dir`, which for the identical reason installs under
 //! `install_root`, never `prefix`, on every platform) mean anything as a
-//! root there. [`SkyrimModded::install_base`] reflects that split:
-//! `drive_c` under the real prefix on Linux, `ctx.dirs.install_root`
-//! directly on Windows -- both were tried and found reported-broken in
-//! turn (`drive_c` under `prefix` first, since a nested `drive_c` at least
+//! root there. [`SkyrimModded::install_base`] reflects that split: `drive_c`
+//! under the real prefix on Linux, the **real system `C:\` drive** on
+//! Windows -- three things were tried and found reported-broken in turn
+//! (`drive_c` under `prefix` first, since a nested `drive_c` at least
 //! *looked* plausible; then `prefix` itself once that got fixed, since
-//! `…\prefixes\<id>\…` in a real path is exactly as misleading on Windows
-//! as `drive_c` was, just one level up) before landing here.
+//! `…\prefixes\<id>\…` in a real path is exactly as misleading on Windows as
+//! `drive_c` was, just one level up; then `ctx.dirs.install_root`, which
+//! *looked* right but still isn't `C:\…` -- MO2's `ModOrganizer.ini`
+//! `gamePath` is an absolute `C:\GOG Games\…` path baked in by the synced
+//! "Skyrim MO2" folder, so on native Windows -- where, unlike Wine, there is
+//! no per-machine remapping of `C:\` -- the game has to actually sit at that
+//! literal path on the real drive for MO2 to find it at all) before landing
+//! here. This means [`Self::game_dir`] and [`Self::sync_root`] are *not*
+//! nested under `ctx.dirs.install_root`/`ctx.dirs.prefix` on Windows, so
+//! [`SkyrimModded`] overrides `uninstall_plan` to remove them explicitly
+//! (the engine-provided default only knows about `install_root`/`prefix`).
 
 use std::path::PathBuf;
 
@@ -53,7 +62,8 @@ use crate::game::{
 #[cfg(not(windows))]
 use crate::run::{UmuLaunch, find_umu, resolve_proton_dir};
 use crate::steps::{
-    EnsurePrefixStep, EnsureSyncFolderStep, ExtractArchiveStep, InnoExtractStep, S3FetchStep,
+    EnsurePrefixStep, EnsureSyncFolderStep, ExtractArchiveStep, InnoExtractStep, RemovePathsStep,
+    S3FetchStep,
 };
 
 /// Subdirectory names of the three synced folders, under the C: sync root.
@@ -220,19 +230,21 @@ impl SkyrimModded {
     /// under. On Linux: the prefix's `C:` drive (`drive_c`) -- umu/Proton
     /// place the wine prefix at `WINEPREFIX` directly, so `drive_c` sits at
     /// the prefix root (same assumption the GOG class uses for in-prefix
-    /// save paths). On Windows: `ctx.dirs.install_root`, *not*
-    /// `ctx.dirs.prefix` -- that directory exists to hold the real Wine
-    /// prefix Proton needs (see `GameDirs::prefix`'s doc comment and
-    /// `GogGame::game_dir`, which for the exact same reason installs under
-    /// `install_root`, never `prefix`, on every platform), and is
-    /// meaningless as a root on Windows, where there's no prefix in it at
-    /// all -- rooting there anyway was still misleading after the previous
-    /// fix here (which only dropped the fake `drive_c` nesting, not this),
-    /// showing up as `…\prefixes\<id>\…` in a real Syncthing folder path
-    /// with nothing under `prefixes` actually meaning "prefix" on Windows.
+    /// save paths). On Windows: the **real system `C:\` drive** -- not
+    /// `ctx.dirs.install_root` (which *looked* like the fix, but still isn't
+    /// `C:\…`) and not `ctx.dirs.prefix` (which exists purely to hold the
+    /// real Wine prefix Proton needs and is meaningless on Windows, where
+    /// there's no prefix at all -- see `GameDirs::prefix`'s doc comment).
+    /// MO2's own `ModOrganizer.ini` `gamePath`, recorded once and then
+    /// carried machine-to-machine inside the synced "Skyrim MO2" folder, is
+    /// an absolute `C:\GOG Games\…` path -- portable on Linux only because
+    /// Wine remaps `C:\…` to *this* machine's own prefix; native Windows has
+    /// no such remapping, so the only way the same ini works unmodified
+    /// there is for the game to actually live at that literal path on the
+    /// real drive.
     fn install_base(&self, ctx: &GameCtx) -> PathBuf {
         if cfg!(windows) {
-            ctx.dirs.install_root.clone()
+            PathBuf::from(r"C:\")
         } else {
             ctx.dirs.prefix.join("drive_c")
         }
@@ -452,6 +464,23 @@ impl GameClass for SkyrimModded {
         Ok(plan)
     }
 
+    /// `game_dir`/`sync_root` aren't nested under `ctx.dirs.install_root` or
+    /// `ctx.dirs.prefix` on Windows (see [`Self::install_base`]), so the
+    /// engine's default uninstall -- which only removes those two -- would
+    /// silently leave the real game + synced folders behind on the real `C:`
+    /// drive. Remove all four; each is a no-op if it doesn't exist.
+    fn uninstall_plan(&self, ctx: &GameCtx) -> anyhow::Result<Vec<Box<dyn InstallStep>>> {
+        Ok(vec![Box::new(RemovePathsStep {
+            pause_folders: self.sync_folders(ctx),
+            paths: vec![
+                ctx.dirs.install_root.clone(),
+                ctx.dirs.prefix.clone(),
+                self.game_dir(ctx),
+                self.sync_root(ctx),
+            ],
+        })])
+    }
+
     async fn launch(&self, ctx: &GameCtx) -> anyhow::Result<LaunchedGame> {
         let exe = self.mo2_exe(ctx);
         anyhow::ensure!(
@@ -466,15 +495,15 @@ impl GameClass for SkyrimModded {
         Some(WatchHint::ExeNames(self.watch_exes()))
     }
 
-    /// Scope playtime detection to [`Self::install_base`]: the game and MO2
-    /// both run under it, on every platform. On Linux that's the prefix's
-    /// `drive_c`, not `install_root` (`WatcherSpec::default`'s scope) --
-    /// `install_root` doesn't contain the running processes there.
+    /// Scope playtime detection to [`Self::game_dir`], where the watched
+    /// exes (`watch_exes`, all game/SKSE binaries, never MO2 itself) actually
+    /// live -- *not* [`Self::install_base`], which on Windows is now the
+    /// whole real `C:\` drive and so wouldn't scope anything at all.
     fn watcher(&self, ctx: &GameCtx) -> WatcherSpec {
         WatcherSpec {
             hint: self.watch_hint(),
             scope: WatchScope {
-                under_path: Some(self.install_base(ctx)),
+                under_path: Some(self.game_dir(ctx)),
             },
             ..WatcherSpec::default()
         }
@@ -702,12 +731,11 @@ mod tests {
         assert!(!ids.iter().any(|id| id.starts_with("extract:")), "{ids:?}");
     }
 
-    /// `drive_c/…` under the real prefix on Linux; `ctx.dirs.install_root`
-    /// directly on Windows, where there's no real prefix at all -- see
-    /// `SkyrimModded::install_base`'s doc comment.
+    /// `drive_c/…` under the real prefix on Linux; the real system `C:\`
+    /// drive on Windows -- see `SkyrimModded::install_base`'s doc comment.
     fn expected_install_base(ctx: &GameCtx) -> PathBuf {
         if cfg!(windows) {
-            ctx.dirs.install_root.clone()
+            PathBuf::from(r"C:\")
         } else {
             ctx.dirs.prefix.join("drive_c")
         }
@@ -794,13 +822,15 @@ mod tests {
     }
 
     #[test]
-    fn watcher_is_scoped_to_the_install_base() {
+    fn watcher_is_scoped_to_the_game_dir() {
+        // not install_base: on Windows that's now the whole C: drive, which
+        // wouldn't scope anything (see `SkyrimModded::watcher`'s doc comment).
         let game = SkyrimModded::from_definition(&test_definition()).unwrap();
         let ctx = ctx();
         let spec = game.watcher(&ctx);
         assert_eq!(
             spec.scope.under_path.as_deref(),
-            Some(expected_install_base(&ctx).as_path())
+            Some(game.game_dir(&ctx).as_path())
         );
     }
 
@@ -815,5 +845,47 @@ mod tests {
             }
             _ => panic!("expected ExeNames"),
         }
+    }
+
+    #[tokio::test]
+    async fn uninstall_removes_game_dir_and_sync_root_not_just_install_root_and_prefix() {
+        // on Windows game_dir/sync_root live on the real C: drive, outside
+        // both install_root and prefix -- the engine's default uninstall
+        // (those two roots only) would leave them behind. Uses its own
+        // tempdir (not the shared `ctx()` fixture) since it creates real
+        // directories on disk.
+        let game = SkyrimModded::from_definition(&test_definition()).unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let ctx = GameCtx {
+            dirs: GameDirs {
+                install_root: root.join("lib/skyrim"),
+                prefix: root.join("prefixes/skyrim"),
+                downloads: root.join("dl/skyrim"),
+            },
+            ..ctx()
+        };
+        let plan = game.uninstall_plan(&ctx).unwrap();
+        assert_eq!(plan.len(), 1);
+        assert_eq!(plan[0].id(), "remove-roots");
+
+        assert!(
+            plan[0].is_done(&ctx).await.unwrap(),
+            "nothing installed yet"
+        );
+
+        std::fs::create_dir_all(game.game_dir(&ctx)).unwrap();
+        assert!(
+            !plan[0].is_done(&ctx).await.unwrap(),
+            "game_dir must be one of the removed paths"
+        );
+        std::fs::remove_dir_all(game.game_dir(&ctx)).unwrap();
+
+        std::fs::create_dir_all(game.sync_root(&ctx)).unwrap();
+        assert!(
+            !plan[0].is_done(&ctx).await.unwrap(),
+            "sync_root must be one of the removed paths"
+        );
+        std::fs::remove_dir_all(game.sync_root(&ctx)).unwrap();
     }
 }
