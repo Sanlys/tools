@@ -157,10 +157,12 @@ impl GameMgrPanel {
     }
 
     /// Short label for the deployed build, e.g. `"d4956ea88f2d"` -- `None`
-    /// while `/ping` hasn't resolved yet or failed. See [`PingResponse`].
+    /// while `/ping` hasn't resolved yet or failed. Reads `build` (the git
+    /// commit), *not* `version` (the compatibility-check semver) -- see
+    /// [`PingResponse`]'s doc comment on why those are different fields.
     fn version_label(&self) -> Option<String> {
         match self.ping.ready() {
-            Some(Ok(ping)) => Some(ping.version.chars().take(12).collect()),
+            Some(Ok(ping)) => Some(ping.build.chars().take(12).collect()),
             _ => None,
         }
     }

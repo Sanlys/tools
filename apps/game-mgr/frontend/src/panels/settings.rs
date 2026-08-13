@@ -39,7 +39,10 @@ impl GameMgrPanel {
                 );
             }
             Some(Ok(ping)) => {
-                ui.label(format!("Backend build: {} ({})", ping.version, ping.status));
+                ui.label(format!(
+                    "Backend build: {} -- v{} ({})",
+                    ping.build, ping.version, ping.status
+                ));
             }
         }
         ui.label(
