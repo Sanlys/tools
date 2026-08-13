@@ -79,7 +79,9 @@ pub fn which(bin: &str) -> Option<PathBuf> {
         let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| DEFAULT_PATHEXT.to_string());
         which_windows(bin, &dirs, &pathext)
     } else {
-        dirs.into_iter().map(|dir| dir.join(bin)).find(|c| c.is_file())
+        dirs.into_iter()
+            .map(|dir| dir.join(bin))
+            .find(|c| c.is_file())
     }
 }
 
