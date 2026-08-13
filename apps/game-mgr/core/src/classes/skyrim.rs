@@ -25,17 +25,20 @@
 //! Launch is `umu-run` on `…/Skyrim MO2/ModOrganizer.exe` (Linux) or that
 //! same exe run directly (Windows, via `crate::run::NativeLaunch`) — MO2 is
 //! itself Windows software either way, so Windows needs no Proton/Wine
-//! translation layer. On Windows there is no real Wine prefix backing a
-//! `drive_c` subtree at all (`EnsurePrefixStep` is a no-op there) -- nothing
-//! there redirects a literal `C:\…` path the way Wine does inside its own
-//! prefix, so `drive_c` there used to just be an extra nesting level with no
-//! actual meaning, which is exactly what was reported broken: Syncthing's
-//! registered folder path (computed with the `drive_c` prefix) didn't match
-//! where the game/MO2 were actually installed and launched from. On
-//! Windows, [`SkyrimModded::drive_c`] is `ctx.dirs.prefix` directly instead
-//! -- this class's own private per-game directory needs no fake drive
-//! layer, since nothing there is pretending to *be* `C:\` the way Wine's
-//! `drive_c` genuinely is.
+//! translation layer. On Windows there is no real Wine prefix at all
+//! (`EnsurePrefixStep` is a no-op there) -- nothing redirects a literal
+//! `C:\…` path the way Wine does inside its own prefix, so neither a fake
+//! `drive_c` subtree nor `ctx.dirs.prefix` itself (which exists purely to
+//! hold that real Wine prefix -- see `GameDirs::prefix`'s doc comment, and
+//! `GogGame::game_dir`, which for the identical reason installs under
+//! `install_root`, never `prefix`, on every platform) mean anything as a
+//! root there. [`SkyrimModded::install_base`] reflects that split:
+//! `drive_c` under the real prefix on Linux, `ctx.dirs.install_root`
+//! directly on Windows -- both were tried and found reported-broken in
+//! turn (`drive_c` under `prefix` first, since a nested `drive_c` at least
+//! *looked* plausible; then `prefix` itself once that got fixed, since
+//! `…\prefixes\<id>\…` in a real path is exactly as misleading on Windows
+//! as `drive_c` was, just one level up) before landing here.
 
 use std::path::PathBuf;
 
@@ -213,15 +216,23 @@ impl SkyrimModded {
         Ok(*exes[0])
     }
 
-    /// On Linux: the prefix's `C:` drive root (`drive_c`). umu/Proton place
-    /// the wine prefix at `WINEPREFIX` directly, so `drive_c` sits at the
-    /// prefix root (same assumption the GOG class uses for in-prefix save
-    /// paths). On Windows: `ctx.dirs.prefix` itself, with no `drive_c`
-    /// nesting -- see this module's doc comment for why a fake `C:\` layer
-    /// has no meaning there.
-    fn drive_c(&self, ctx: &GameCtx) -> PathBuf {
+    /// Root that `game_dir`/`sync_root` (and so everything under them) nest
+    /// under. On Linux: the prefix's `C:` drive (`drive_c`) -- umu/Proton
+    /// place the wine prefix at `WINEPREFIX` directly, so `drive_c` sits at
+    /// the prefix root (same assumption the GOG class uses for in-prefix
+    /// save paths). On Windows: `ctx.dirs.install_root`, *not*
+    /// `ctx.dirs.prefix` -- that directory exists to hold the real Wine
+    /// prefix Proton needs (see `GameDirs::prefix`'s doc comment and
+    /// `GogGame::game_dir`, which for the exact same reason installs under
+    /// `install_root`, never `prefix`, on every platform), and is
+    /// meaningless as a root on Windows, where there's no prefix in it at
+    /// all -- rooting there anyway was still misleading after the previous
+    /// fix here (which only dropped the fake `drive_c` nesting, not this),
+    /// showing up as `…\prefixes\<id>\…` in a real Syncthing folder path
+    /// with nothing under `prefixes` actually meaning "prefix" on Windows.
+    fn install_base(&self, ctx: &GameCtx) -> PathBuf {
         if cfg!(windows) {
-            ctx.dirs.prefix.clone()
+            ctx.dirs.install_root.clone()
         } else {
             ctx.dirs.prefix.join("drive_c")
         }
@@ -237,9 +248,11 @@ impl SkyrimModded {
         dir
     }
 
-    /// Where the GOG game + SKSE are installed: inside the prefix's C: drive at
-    /// the configured Windows path. Per-machine (the prefix is per-machine) but
-    /// at an identical `C:\…` path everywhere, so MO2's gamePath is portable.
+    /// Where the GOG game + SKSE are installed, at the configured Windows-
+    /// style relative path under [`Self::install_base`]. Per-machine, but at
+    /// an identical `C:\…` path inside every Linux machine's own prefix, so
+    /// MO2's `gamePath` (recorded in its ini, which lives inside the synced
+    /// "Skyrim MO2" folder) is portable between them.
     fn game_dir(&self, ctx: &GameCtx) -> PathBuf {
         let rel = self
             .config
@@ -248,11 +261,13 @@ impl SkyrimModded {
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .unwrap_or(DEFAULT_GAME_PATH_IN_PREFIX);
-        Self::join_win(self.drive_c(ctx), rel)
+        Self::join_win(self.install_base(ctx), rel)
     }
 
-    /// Base path on the C: drive holding the three synced folders. Defaults to
-    /// `game-mgr/<id>` so two skyrim-modded titles never collide.
+    /// Base path (on the C: drive on Linux; under `install_root` directly
+    /// on Windows -- see [`Self::install_base`]) holding the three synced
+    /// folders. Defaults to `game-mgr/<id>` so two skyrim-modded titles
+    /// never collide.
     fn sync_root(&self, ctx: &GameCtx) -> PathBuf {
         let rel = self
             .config
@@ -262,7 +277,7 @@ impl SkyrimModded {
             .filter(|s| !s.is_empty())
             .map(str::to_string)
             .unwrap_or_else(|| format!("game-mgr/{}", self.meta.id));
-        Self::join_win(self.drive_c(ctx), &rel)
+        Self::join_win(self.install_base(ctx), &rel)
     }
 
     /// The ModOrganizer.exe to launch (under the C: sync root).
@@ -451,14 +466,15 @@ impl GameClass for SkyrimModded {
         Some(WatchHint::ExeNames(self.watch_exes()))
     }
 
-    /// Scope playtime detection to this game's **prefix**: the game (in
-    /// `drive_c`) and MO2 (in the C: sync root) both run under it. The default
-    /// scope is `install_root`, which no longer contains the running processes.
+    /// Scope playtime detection to [`Self::install_base`]: the game and MO2
+    /// both run under it, on every platform. On Linux that's the prefix's
+    /// `drive_c`, not `install_root` (`WatcherSpec::default`'s scope) --
+    /// `install_root` doesn't contain the running processes there.
     fn watcher(&self, ctx: &GameCtx) -> WatcherSpec {
         WatcherSpec {
             hint: self.watch_hint(),
             scope: WatchScope {
-                under_path: Some(ctx.dirs.prefix.clone()),
+                under_path: Some(self.install_base(ctx)),
             },
             ..WatcherSpec::default()
         }
@@ -686,12 +702,12 @@ mod tests {
         assert!(!ids.iter().any(|id| id.starts_with("extract:")), "{ids:?}");
     }
 
-    /// `drive_c/…` on Linux (the real Wine prefix layout); `ctx.dirs.prefix`
-    /// itself on Windows, where there's no real `C:\` to fake -- see
-    /// `SkyrimModded::drive_c`'s doc comment.
-    fn expected_drive_c(ctx: &GameCtx) -> PathBuf {
+    /// `drive_c/…` under the real prefix on Linux; `ctx.dirs.install_root`
+    /// directly on Windows, where there's no real prefix at all -- see
+    /// `SkyrimModded::install_base`'s doc comment.
+    fn expected_install_base(ctx: &GameCtx) -> PathBuf {
         if cfg!(windows) {
-            ctx.dirs.prefix.clone()
+            ctx.dirs.install_root.clone()
         } else {
             ctx.dirs.prefix.join("drive_c")
         }
@@ -720,15 +736,16 @@ mod tests {
                     );
                 }
             }
-            // every folder lives under the C: sync root, on the (real or
-            // faked, per platform) C: drive
+            // every folder lives under the C: sync root, in turn under
+            // install_base (the real C: drive on Linux; install_root
+            // directly on Windows)
             assert!(a.local_path.starts_with(game.sync_root(&ctx)));
-            assert!(a.local_path.starts_with(expected_drive_c(&ctx)));
+            assert!(a.local_path.starts_with(expected_install_base(&ctx)));
         }
-        // default sync root is game-mgr/<id>, nested under drive_c on Linux
+        // default sync root is game-mgr/<id>, nested under install_base
         assert_eq!(
             game.sync_root(&ctx),
-            expected_drive_c(&ctx).join("game-mgr/skyrim")
+            expected_install_base(&ctx).join("game-mgr/skyrim")
         );
     }
 
@@ -736,7 +753,7 @@ mod tests {
     fn game_and_mo2_live_on_the_c_drive_by_default() {
         let game = SkyrimModded::from_definition(&test_definition()).unwrap();
         let ctx = ctx();
-        let drive_c = expected_drive_c(&ctx);
+        let drive_c = expected_install_base(&ctx);
         let game_dir = game.game_dir(&ctx);
         assert!(game_dir.starts_with(&drive_c), "{game_dir:?}");
         assert_eq!(
@@ -764,26 +781,26 @@ mod tests {
         let ctx = ctx();
         assert_eq!(
             game.game_dir(&ctx),
-            expected_drive_c(&ctx).join("Games/Skyrim SE")
+            expected_install_base(&ctx).join("Games/Skyrim SE")
         );
         assert_eq!(
             game.sync_root(&ctx),
-            expected_drive_c(&ctx).join("Modding/Skyrim")
+            expected_install_base(&ctx).join("Modding/Skyrim")
         );
         assert_eq!(
             game.mo2_exe(&ctx),
-            expected_drive_c(&ctx).join("Modding/Skyrim/MO2/ModOrganizer.exe")
+            expected_install_base(&ctx).join("Modding/Skyrim/MO2/ModOrganizer.exe")
         );
     }
 
     #[test]
-    fn watcher_is_scoped_to_the_prefix() {
+    fn watcher_is_scoped_to_the_install_base() {
         let game = SkyrimModded::from_definition(&test_definition()).unwrap();
         let ctx = ctx();
         let spec = game.watcher(&ctx);
         assert_eq!(
             spec.scope.under_path.as_deref(),
-            Some(ctx.dirs.prefix.as_path())
+            Some(expected_install_base(&ctx).as_path())
         );
     }
 
