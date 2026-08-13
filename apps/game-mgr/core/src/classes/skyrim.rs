@@ -11,21 +11,31 @@
 //!   also live on the prefix's **C: drive**, under a fixed base path
 //!   (`C:\game-mgr\<id>` by default).
 //!
-//! Everything is reached through the **C: drive** on purpose: the prefix is
-//! per-machine but `C:\…` paths are identical everywhere, so MO2's config is
-//! portable. We deliberately avoid a custom drive letter (X:, …) — Wine's
-//! mount manager auto-assigns letters to detected volumes (e.g. a separate
-//! `/home` mount) and would clobber a hand-mapped drive on every launch; only
-//! `C:` (always `drive_c`) is safe.
+//! Everything is reached through the **C: drive** on purpose *on Linux*: the
+//! prefix is per-machine but `C:\…` paths inside it are identical
+//! everywhere, so MO2's own config (its `ModOrganizer.ini` `gamePath`, which
+//! lives inside the synced `Skyrim MO2` folder and therefore travels between
+//! machines) stays portable — Wine resolves a `C:\…` path against *this*
+//! prefix's `drive_c` on whichever Linux machine is running it. We
+//! deliberately avoid a custom drive letter (X:, …) — Wine's mount manager
+//! auto-assigns letters to detected volumes (e.g. a separate `/home` mount)
+//! and would clobber a hand-mapped drive on every launch; only `C:` (always
+//! `drive_c`) is safe.
 //!
 //! Launch is `umu-run` on `…/Skyrim MO2/ModOrganizer.exe` (Linux) or that
 //! same exe run directly (Windows, via `crate::run::NativeLaunch`) — MO2 is
 //! itself Windows software either way, so Windows needs no Proton/Wine
-//! translation layer. The `C:\…` paths above are just this class's own
-//! directory layout under the per-game prefix dir; on Windows there's no
-//! real Wine prefix backing them (`EnsurePrefixStep` is a no-op there), but
-//! the same `drive_c/…` subtree still works as an ordinary install
-//! location.
+//! translation layer. On Windows there is no real Wine prefix backing a
+//! `drive_c` subtree at all (`EnsurePrefixStep` is a no-op there) -- nothing
+//! there redirects a literal `C:\…` path the way Wine does inside its own
+//! prefix, so `drive_c` there used to just be an extra nesting level with no
+//! actual meaning, which is exactly what was reported broken: Syncthing's
+//! registered folder path (computed with the `drive_c` prefix) didn't match
+//! where the game/MO2 were actually installed and launched from. On
+//! Windows, [`SkyrimModded::drive_c`] is `ctx.dirs.prefix` directly instead
+//! -- this class's own private per-game directory needs no fake drive
+//! layer, since nothing there is pretending to *be* `C:\` the way Wine's
+//! `drive_c` genuinely is.
 
 use std::path::PathBuf;
 
@@ -203,11 +213,18 @@ impl SkyrimModded {
         Ok(*exes[0])
     }
 
-    /// The prefix's `C:` drive root (`drive_c`). umu/Proton place the wine
-    /// prefix at `WINEPREFIX` directly, so `drive_c` sits at the prefix root
-    /// (same assumption the GOG class uses for in-prefix save paths).
+    /// On Linux: the prefix's `C:` drive root (`drive_c`). umu/Proton place
+    /// the wine prefix at `WINEPREFIX` directly, so `drive_c` sits at the
+    /// prefix root (same assumption the GOG class uses for in-prefix save
+    /// paths). On Windows: `ctx.dirs.prefix` itself, with no `drive_c`
+    /// nesting -- see this module's doc comment for why a fake `C:\` layer
+    /// has no meaning there.
     fn drive_c(&self, ctx: &GameCtx) -> PathBuf {
-        ctx.dirs.prefix.join("drive_c")
+        if cfg!(windows) {
+            ctx.dirs.prefix.clone()
+        } else {
+            ctx.dirs.prefix.join("drive_c")
+        }
     }
 
     /// Join a Windows-style relative path (`/` or `\` separated) onto a base,
@@ -669,6 +686,17 @@ mod tests {
         assert!(!ids.iter().any(|id| id.starts_with("extract:")), "{ids:?}");
     }
 
+    /// `drive_c/…` on Linux (the real Wine prefix layout); `ctx.dirs.prefix`
+    /// itself on Windows, where there's no real `C:\` to fake -- see
+    /// `SkyrimModded::drive_c`'s doc comment.
+    fn expected_drive_c(ctx: &GameCtx) -> PathBuf {
+        if cfg!(windows) {
+            ctx.dirs.prefix.clone()
+        } else {
+            ctx.dirs.prefix.join("drive_c")
+        }
+    }
+
     #[test]
     fn three_sibling_sync_folders_none_nested() {
         let game = SkyrimModded::from_definition(&test_definition()).unwrap();
@@ -692,15 +720,15 @@ mod tests {
                     );
                 }
             }
-            // every folder lives under the C: sync root, on the C: drive
+            // every folder lives under the C: sync root, on the (real or
+            // faked, per platform) C: drive
             assert!(a.local_path.starts_with(game.sync_root(&ctx)));
-            assert!(a.local_path.starts_with(ctx.dirs.prefix.join("drive_c")));
+            assert!(a.local_path.starts_with(expected_drive_c(&ctx)));
         }
-        // default sync root is game-mgr/<id> on C:
-        assert!(
-            game.sync_root(&ctx).ends_with("drive_c/game-mgr/skyrim"),
-            "{:?}",
-            game.sync_root(&ctx)
+        // default sync root is game-mgr/<id>, nested under drive_c on Linux
+        assert_eq!(
+            game.sync_root(&ctx),
+            expected_drive_c(&ctx).join("game-mgr/skyrim")
         );
     }
 
@@ -708,19 +736,19 @@ mod tests {
     fn game_and_mo2_live_on_the_c_drive_by_default() {
         let game = SkyrimModded::from_definition(&test_definition()).unwrap();
         let ctx = ctx();
-        let drive_c = ctx.dirs.prefix.join("drive_c");
+        let drive_c = expected_drive_c(&ctx);
         let game_dir = game.game_dir(&ctx);
         assert!(game_dir.starts_with(&drive_c), "{game_dir:?}");
-        assert!(
-            game_dir.ends_with("drive_c/GOG Games/Skyrim Anniversary Edition"),
-            "{game_dir:?}"
+        assert_eq!(
+            game_dir,
+            drive_c.join("GOG Games/Skyrim Anniversary Edition")
         );
         // MO2 lives under the C: sync root, not a custom drive
         let mo2 = game.mo2_exe(&ctx);
         assert!(mo2.starts_with(&drive_c), "{mo2:?}");
-        assert!(
-            mo2.ends_with("drive_c/game-mgr/skyrim/Skyrim MO2/ModOrganizer.exe"),
-            "{mo2:?}"
+        assert_eq!(
+            mo2,
+            drive_c.join("game-mgr/skyrim/Skyrim MO2/ModOrganizer.exe")
         );
     }
 
@@ -734,21 +762,17 @@ mod tests {
         });
         let game = SkyrimModded::from_definition(&def).unwrap();
         let ctx = ctx();
-        assert!(
-            game.game_dir(&ctx).ends_with("drive_c/Games/Skyrim SE"),
-            "{:?}",
-            game.game_dir(&ctx)
+        assert_eq!(
+            game.game_dir(&ctx),
+            expected_drive_c(&ctx).join("Games/Skyrim SE")
         );
-        assert!(
-            game.sync_root(&ctx).ends_with("drive_c/Modding/Skyrim"),
-            "{:?}",
-            game.sync_root(&ctx)
+        assert_eq!(
+            game.sync_root(&ctx),
+            expected_drive_c(&ctx).join("Modding/Skyrim")
         );
-        assert!(
-            game.mo2_exe(&ctx)
-                .ends_with("drive_c/Modding/Skyrim/MO2/ModOrganizer.exe"),
-            "{:?}",
-            game.mo2_exe(&ctx)
+        assert_eq!(
+            game.mo2_exe(&ctx),
+            expected_drive_c(&ctx).join("Modding/Skyrim/MO2/ModOrganizer.exe")
         );
     }
 
