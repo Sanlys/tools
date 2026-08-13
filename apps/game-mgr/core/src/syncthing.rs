@@ -166,6 +166,43 @@ impl SyncthingClient {
     /// Create or update a folder: same `folder_id` everywhere, per-device
     /// `local_path`, shared with all peers, ignore patterns asserted.
     pub async fn ensure_folder(&self, spec: &SyncFolderSpec) -> Result<()> {
+        // A repointed local path (a game-mgr code update changing how a
+        // path is computed -- see e.g. GogGame::resolve_save_path -- or a
+        // settings edit) must not silently start over: without migrating
+        // the actual files first, Syncthing sees an empty directory at the
+        // new path and re-downloads everything from peers, even though the
+        // same content already exists locally at the old one.
+        let existing = self.folder(&spec.folder_id).await?;
+        if let Some(existing) = &existing {
+            let existing_path = PathBuf::from(&existing.path);
+            if existing_path != spec.local_path {
+                tracing::warn!(
+                    folder = %spec.folder_id,
+                    old = %existing.path,
+                    new = %spec.local_path.display(),
+                    "moving syncthing folder to a new local path",
+                );
+                let (old, new) = (existing_path, spec.local_path.clone());
+                if let Err(err) =
+                    tokio::task::spawn_blocking(move || migrate_folder_contents(&old, &new))
+                        .await
+                        .context("migrate task panicked")?
+                {
+                    // Best-effort: log and continue rather than fail the
+                    // whole install/launch over it -- Syncthing will just
+                    // fall back to re-transferring from a peer, which is
+                    // the pre-existing (if wasteful) behavior this is
+                    // trying to improve on, not a new failure mode.
+                    tracing::warn!(
+                        folder = %spec.folder_id,
+                        %err,
+                        "could not migrate synced folder contents to its new path -- \
+                         Syncthing will likely re-download instead",
+                    );
+                }
+            }
+        }
+
         std::fs::create_dir_all(&spec.local_path)
             .with_context(|| format!("creating {}", spec.local_path.display()))?;
 
@@ -184,23 +221,13 @@ impl SyncthingClient {
             "type": "sendreceive",
             "devices": devices,
         });
-        match self.folder(&spec.folder_id).await? {
+        match existing {
             None => {
                 self.send_json(reqwest::Method::POST, "/rest/config/folders", None, body)
                     .await
                     .context("creating syncthing folder")?;
             }
-            Some(existing) => {
-                // a changed saves path (game settings edit) repoints the
-                // folder to its new local location, rather than refusing.
-                if Path::new(&existing.path) != spec.local_path.as_path() {
-                    tracing::warn!(
-                        folder = %spec.folder_id,
-                        old = %existing.path,
-                        new = %spec.local_path.display(),
-                        "moving syncthing folder to a new local path",
-                    );
-                }
+            Some(_) => {
                 self.send_json(
                     reqwest::Method::PATCH,
                     &format!("/rest/config/folders/{}", spec.folder_id),
@@ -267,6 +294,76 @@ impl SyncthingClient {
             conflict_files: scan_conflicts(&spec.local_path),
         })
     }
+}
+
+/// Move `old`'s contents into `new` when a sync folder's local path just
+/// changed, so Syncthing finds the same content already present at the new
+/// path instead of an empty directory it would otherwise have to
+/// re-transfer wholesale from a peer. Best-effort and conservative:
+/// - no-op if `old` doesn't exist or is empty (nothing to migrate)
+/// - refuses (rather than guessing which is authoritative) if `new` already
+///   has content of its own
+/// - a plain rename when possible (instant, same filesystem); falls back to
+///   copy + remove when `old` and `new` are on different filesystems/drives
+///   (a rename can't cross those)
+fn migrate_folder_contents(old: &Path, new: &Path) -> anyhow::Result<()> {
+    if !old.is_dir() || !dir_has_entries(old)? {
+        return Ok(());
+    }
+    if new.is_dir() {
+        if dir_has_entries(new)? {
+            anyhow::bail!(
+                "both {} and {} already have content -- not migrating automatically; \
+                 move the data by hand and remove whichever copy is stale",
+                old.display(),
+                new.display()
+            );
+        }
+        // empty -- remove so the rename below can claim the (otherwise
+        // already-occupied) destination path
+        std::fs::remove_dir(new)
+            .with_context(|| format!("removing empty destination {}", new.display()))?;
+    } else if let Some(parent) = new.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
+    }
+
+    if std::fs::rename(old, new).is_ok() {
+        return Ok(());
+    }
+    copy_dir_recursive(old, new)
+        .with_context(|| format!("copying {} to {}", old.display(), new.display()))?;
+    std::fs::remove_dir_all(old)
+        .with_context(|| format!("removing migrated-from {}", old.display()))?;
+    Ok(())
+}
+
+fn dir_has_entries(dir: &Path) -> anyhow::Result<bool> {
+    Ok(std::fs::read_dir(dir)
+        .with_context(|| format!("reading {}", dir.display()))?
+        .next()
+        .is_some())
+}
+
+/// Recursively copy `src`'s contents into `dst` -- the cross-filesystem
+/// fallback for [`migrate_folder_contents`], which a plain rename can't
+/// handle. `dst` is created if it doesn't exist; existing files under it are
+/// overwritten (mirrors `steps::extract::merge_dir`'s semantics, though this
+/// one doesn't need to merge onto a populated tree in practice since
+/// `migrate_folder_contents` only calls it once `dst` is confirmed empty).
+fn copy_dir_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)?.flatten() {
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        if from.is_dir() {
+            copy_dir_recursive(&from, &to)?;
+        } else {
+            std::fs::copy(&from, &to)
+                .with_context(|| format!("copying {} -> {}", from.display(), to.display()))?;
+        }
+    }
+    Ok(())
 }
 
 /// Find `*.sync-conflict-*` files under a folder (bounded walk).
@@ -434,5 +531,91 @@ mod tests {
         let conflicts = scan_conflicts(dir.path());
         assert_eq!(conflicts.len(), 1);
         assert!(conflicts[0].contains("sync-conflict"));
+    }
+
+    #[test]
+    fn migrate_moves_content_to_the_new_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("old");
+        let new = dir.path().join("new");
+        std::fs::create_dir_all(old.join("sub")).unwrap();
+        std::fs::write(old.join("save.dat"), b"hello").unwrap();
+        std::fs::write(old.join("sub/nested.dat"), b"world").unwrap();
+
+        migrate_folder_contents(&old, &new).unwrap();
+
+        assert!(!old.exists(), "old path should be gone after migration");
+        assert_eq!(std::fs::read(new.join("save.dat")).unwrap(), b"hello");
+        assert_eq!(std::fs::read(new.join("sub/nested.dat")).unwrap(), b"world");
+    }
+
+    #[test]
+    fn migrate_is_a_noop_when_old_path_does_not_exist() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("never-existed");
+        let new = dir.path().join("new");
+        migrate_folder_contents(&old, &new).unwrap();
+        assert!(!new.exists(), "nothing to migrate -- new shouldn't appear");
+    }
+
+    #[test]
+    fn migrate_is_a_noop_when_old_path_is_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("old");
+        let new = dir.path().join("new");
+        std::fs::create_dir_all(&old).unwrap();
+        migrate_folder_contents(&old, &new).unwrap();
+        assert!(!new.exists());
+        assert!(old.exists(), "an empty old dir is left alone, not deleted");
+    }
+
+    #[test]
+    fn migrate_refuses_to_clobber_content_already_at_the_new_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("old");
+        let new = dir.path().join("new");
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join("a.dat"), b"old-content").unwrap();
+        std::fs::create_dir_all(&new).unwrap();
+        std::fs::write(new.join("b.dat"), b"new-content").unwrap();
+
+        let err = migrate_folder_contents(&old, &new).unwrap_err().to_string();
+        assert!(err.contains("already have content"), "{err}");
+        // neither side touched -- caller (ensure_folder) falls back to
+        // letting Syncthing re-transfer rather than losing anything
+        assert_eq!(std::fs::read(old.join("a.dat")).unwrap(), b"old-content");
+        assert_eq!(std::fs::read(new.join("b.dat")).unwrap(), b"new-content");
+    }
+
+    #[test]
+    fn migrate_replaces_an_empty_destination() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("old");
+        let new = dir.path().join("new");
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join("a.dat"), b"content").unwrap();
+        std::fs::create_dir_all(&new).unwrap(); // pre-created empty, e.g. by an earlier ensure_folder call
+
+        migrate_folder_contents(&old, &new).unwrap();
+        assert_eq!(std::fs::read(new.join("a.dat")).unwrap(), b"content");
+    }
+
+    #[test]
+    fn copy_dir_recursive_fallback_matches_rename() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src");
+        let dst = dir.path().join("dst");
+        std::fs::create_dir_all(src.join("a/b")).unwrap();
+        std::fs::write(src.join("top.dat"), b"1").unwrap();
+        std::fs::write(src.join("a/mid.dat"), b"2").unwrap();
+        std::fs::write(src.join("a/b/deep.dat"), b"3").unwrap();
+
+        copy_dir_recursive(&src, &dst).unwrap();
+
+        assert_eq!(std::fs::read(dst.join("top.dat")).unwrap(), b"1");
+        assert_eq!(std::fs::read(dst.join("a/mid.dat")).unwrap(), b"2");
+        assert_eq!(std::fs::read(dst.join("a/b/deep.dat")).unwrap(), b"3");
+        // src untouched -- migrate_folder_contents itself does the removal
+        assert!(src.join("top.dat").is_file());
     }
 }
