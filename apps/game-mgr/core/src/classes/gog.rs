@@ -202,7 +202,7 @@ impl GogGame {
             // use the UUID-bearing folder id itself.
             label: folder_id.clone(),
             folder_id,
-            local_path: ctx.dirs.prefix.join(saves),
+            local_path: resolve_save_path(ctx, saves),
             stignore: vec![],
             required_before_first_launch: true,
         })
@@ -313,6 +313,91 @@ impl GogGame {
         crate::steps::forward_output(&mut child, "game", &ctx.game_id);
         Ok(LaunchedGame { child })
     }
+}
+
+/// Resolve `saves_in_prefix` (a path written in Wine-prefix terms, e.g.
+/// `drive_c/users/steamuser/AppData/Local/<Studio>/<Game>/Saves` -- see
+/// `GogConfig::saves_in_prefix`'s doc comment) to where the save data
+/// actually lives on disk for the platform this is running on.
+///
+/// On Linux, that's the Proton prefix (Proton/umu's fake `C:` drive) at
+/// `ctx.dirs.prefix`, so the path is used exactly as configured. On
+/// Windows there is no prefix at all -- `EnsurePrefixStep` is a no-op there
+/// (see its doc comment) because the game's own Windows build runs
+/// natively and writes straight to the *real* user profile, not a fake
+/// Wine one. Naively joining `saves_in_prefix` onto `ctx.dirs.prefix`
+/// there points at a directory nothing ever writes to (an empty prefix
+/// folder that was never created), so Syncthing ends up faithfully
+/// syncing nothing while the actual save data sits untouched at the real
+/// path. Translate the same relative structure onto Windows' real special
+/// folders instead: strip the `drive_c/users/<wine-username>/` prefix
+/// (the username there is Wine/Proton's own fake account and carries no
+/// meaning here) and remap the well-known folder that follows --
+/// `AppData/Local(Low)?`, `AppData/Roaming`, `Documents`, `Saved Games` --
+/// onto its real Windows counterpart via `dirs`. Anything that doesn't
+/// match one of those falls back to the same relative path under the
+/// real home directory rather than silently dropping the saves folder
+/// from sync altogether.
+fn resolve_save_path(ctx: &GameCtx, saves_in_prefix: &str) -> PathBuf {
+    if cfg!(windows) {
+        native_windows_save_path(saves_in_prefix)
+            .unwrap_or_else(|| ctx.dirs.prefix.join(saves_in_prefix))
+    } else {
+        ctx.dirs.prefix.join(saves_in_prefix)
+    }
+}
+
+fn native_windows_save_path(saves_in_prefix: &str) -> Option<PathBuf> {
+    resolve_windows_special_folder(
+        saves_in_prefix,
+        dirs::data_local_dir(),
+        dirs::config_dir(),
+        dirs::document_dir(),
+        dirs::home_dir(),
+    )
+}
+
+/// The actual mapping logic, taking the resolved special folders as
+/// parameters instead of calling `dirs::*` directly -- not
+/// `#[cfg(windows)]`-gated (it's pure path/string logic once its inputs are
+/// in hand), so it's exercised by tests on every platform this crate's CI
+/// runs rather than only the Windows job, same reasoning as
+/// `apps/game-mgr/core/src/services.rs`'s `which_windows`. Taking the
+/// folders as parameters rather than calling `dirs::document_dir()` etc.
+/// inline additionally keeps tests deterministic: `document_dir()` reads
+/// `~/.config/user-dirs.dirs` on Linux, which a bare CI image never has
+/// (real Windows always has it, via the OS itself rather than optional
+/// config), so a test that called it directly would flake there.
+fn resolve_windows_special_folder(
+    saves_in_prefix: &str,
+    data_local: Option<PathBuf>,
+    roaming: Option<PathBuf>,
+    documents: Option<PathBuf>,
+    home: Option<PathBuf>,
+) -> Option<PathBuf> {
+    let normalized = saves_in_prefix.replace('\\', "/");
+    let mut parts = normalized.split('/').filter(|s| !s.is_empty());
+    if parts.next()? != "drive_c" || parts.next()? != "users" {
+        return None;
+    }
+    let _wine_username = parts.next()?; // Proton's fake account -- irrelevant natively
+    let rest: Vec<&str> = parts.collect();
+    let (first, after_first) = rest.split_first()?;
+    let (base, tail): (PathBuf, &[&str]) = match (*first, after_first.first().copied()) {
+        ("AppData", Some("Local")) => (data_local?, &after_first[1..]),
+        ("AppData", Some("Roaming")) => (roaming?, &after_first[1..]),
+        ("AppData", Some("LocalLow")) => {
+            (data_local?.parent()?.join("LocalLow"), &after_first[1..])
+        }
+        ("Documents" | "My Documents", _) => (documents?, after_first),
+        ("Saved Games", _) => (home?.join("Saved Games"), after_first),
+        _ => (home?, &rest[..]),
+    };
+    let mut path = base;
+    for component in tail {
+        path.push(component);
+    }
+    Some(path)
 }
 
 #[async_trait::async_trait]
@@ -676,6 +761,21 @@ mod tests {
         assert!(err.contains("exactly one"), "{err}");
     }
 
+    /// Expected `local_path` for `test_definition()`'s
+    /// `"drive_c/users/steamuser/AppData/Local/Test/Saves"` fixture, on
+    /// whichever platform these tests are actually running on -- Windows
+    /// resolves onto the real profile (no Proton prefix exists there, see
+    /// `resolve_save_path`), everywhere else still nests under the prefix.
+    fn expected_saves_path(ctx: &GameCtx) -> PathBuf {
+        if cfg!(windows) {
+            dirs::data_local_dir().unwrap().join("Test/Saves")
+        } else {
+            ctx.dirs
+                .prefix
+                .join("drive_c/users/steamuser/AppData/Local/Test/Saves")
+        }
+    }
+
     #[test]
     fn saves_folder_lives_inside_the_prefix() {
         let game = GogGame::from_definition(&test_definition()).unwrap();
@@ -684,7 +784,7 @@ mod tests {
         assert_eq!(folders.len(), 1);
         // no active profile ⇒ legacy game-only id
         assert_eq!(folders[0].folder_id, "gm-testgog-saves");
-        assert!(folders[0].local_path.starts_with(&ctx.dirs.prefix));
+        assert_eq!(folders[0].local_path, expected_saves_path(&ctx));
     }
 
     #[test]
@@ -697,6 +797,118 @@ mod tests {
         assert_eq!(folders.len(), 1);
         assert_eq!(folders[0].folder_id, format!("gm-testgog-{profile}-saves"));
         // path is unchanged — only the synced folder's identity is per-profile
-        assert!(folders[0].local_path.starts_with(&ctx.dirs.prefix));
+        assert_eq!(folders[0].local_path, expected_saves_path(&ctx));
+    }
+
+    /// Synthetic (not the real environment's) special folders, so these
+    /// tests are deterministic regardless of what's actually configured on
+    /// whatever machine runs them -- see `resolve_windows_special_folder`'s
+    /// doc comment on why that matters (`dirs::document_dir()` in
+    /// particular needs `~/.config/user-dirs.dirs` on Linux, which a bare
+    /// CI image never has).
+    fn fake_folders() -> (PathBuf, PathBuf, PathBuf, PathBuf) {
+        let root = PathBuf::from("C:/Users/fake");
+        (
+            root.join("AppData/Local"),
+            root.join("AppData/Roaming"),
+            root.join("Documents"),
+            root,
+        )
+    }
+
+    #[test]
+    fn native_windows_save_path_maps_appdata_local() {
+        let (data_local, roaming, documents, home) = fake_folders();
+        let resolved = resolve_windows_special_folder(
+            "drive_c/users/steamuser/AppData/Local/Studio/Game/Saves",
+            Some(data_local.clone()),
+            Some(roaming),
+            Some(documents),
+            Some(home),
+        )
+        .expect("should resolve a well-formed AppData/Local path");
+        assert_eq!(resolved, data_local.join("Studio/Game/Saves"));
+    }
+
+    #[test]
+    fn native_windows_save_path_maps_appdata_roaming() {
+        let (data_local, roaming, documents, home) = fake_folders();
+        let resolved = resolve_windows_special_folder(
+            "drive_c/users/steamuser/AppData/Roaming/Studio/Saves",
+            Some(data_local),
+            Some(roaming.clone()),
+            Some(documents),
+            Some(home),
+        )
+        .expect("should resolve a well-formed AppData/Roaming path");
+        assert_eq!(resolved, roaming.join("Studio/Saves"));
+    }
+
+    #[test]
+    fn native_windows_save_path_maps_appdata_locallow() {
+        let (data_local, roaming, documents, home) = fake_folders();
+        let resolved = resolve_windows_special_folder(
+            "drive_c/users/steamuser/AppData/LocalLow/Studio/Game/saved",
+            Some(data_local.clone()),
+            Some(roaming),
+            Some(documents),
+            Some(home),
+        )
+        .expect("should resolve a well-formed AppData/LocalLow path");
+        assert_eq!(
+            resolved,
+            data_local
+                .parent()
+                .unwrap()
+                .join("LocalLow/Studio/Game/saved")
+        );
+    }
+
+    #[test]
+    fn native_windows_save_path_maps_documents() {
+        let (data_local, roaming, documents, home) = fake_folders();
+        let resolved = resolve_windows_special_folder(
+            "drive_c/users/steamuser/Documents/My Games/Game/Saves",
+            Some(data_local),
+            Some(roaming),
+            Some(documents.clone()),
+            Some(home),
+        )
+        .expect("should resolve a well-formed Documents path");
+        assert_eq!(resolved, documents.join("My Games/Game/Saves"));
+    }
+
+    #[test]
+    fn native_windows_save_path_maps_saved_games() {
+        let (data_local, roaming, documents, home) = fake_folders();
+        let resolved = resolve_windows_special_folder(
+            "drive_c/users/steamuser/Saved Games/Studio/Game",
+            Some(data_local),
+            Some(roaming),
+            Some(documents),
+            Some(home.clone()),
+        )
+        .expect("should resolve a well-formed Saved Games path");
+        assert_eq!(resolved, home.join("Saved Games/Studio/Game"));
+    }
+
+    #[test]
+    fn native_windows_save_path_falls_back_to_home_for_unknown_folders() {
+        let (data_local, roaming, documents, home) = fake_folders();
+        let resolved = resolve_windows_special_folder(
+            "drive_c/users/steamuser/SomeOtherPlace/Saves",
+            Some(data_local),
+            Some(roaming),
+            Some(documents),
+            Some(home.clone()),
+        )
+        .expect("unrecognized folder should still fall back, not fail outright");
+        assert_eq!(resolved, home.join("SomeOtherPlace/Saves"));
+    }
+
+    #[test]
+    fn native_windows_save_path_rejects_non_prefix_shaped_input() {
+        assert!(native_windows_save_path("not/a/prefix/path").is_none());
+        assert!(native_windows_save_path("drive_c/Program Files/Game/Saves").is_none());
     }
 }
