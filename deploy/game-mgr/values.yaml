@@ -12,7 +12,7 @@ nameOverride: "game-mgr"
 fullnameOverride: ""
 image:
   repository: harbor.k8s.lysakermoen.com/tools/game-mgr-backend
-  tag: "01bf9f0b2e19e08a72bc663133ba247b359f0d1a"
+  tag: "d76ca4b6cc6f4e9a0e2a75fa48a0c8da5f264dd1"
   pullPolicy: IfNotPresent
 # Not needed as long as the `tools` Harbor project allows anonymous pull --
 # see deploy/hello/values.yaml's comment.
