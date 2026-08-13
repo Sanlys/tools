@@ -13,14 +13,29 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 /// `GET /api/v1/ping` -- unauthenticated, so the frontend can show it even
-/// before sign-in. `version` is the deployed build's git commit (or the
-/// crate's semver as a fallback for a local dev build with no `GIT_SHA`
-/// baked in -- see `apps/game-mgr/backend/Dockerfile`), displayed in the
-/// Settings tab so a deploy can be confirmed by eye rather than guessed at.
+/// before sign-in.
+///
+/// `version` and `build` deliberately carry different things, and existing
+/// clients depend on that split:
+/// - `version` is `CARGO_PKG_VERSION` (the workspace semver, currently
+///   "0.1.0" for every crate here) -- `game-mgr-core::core::
+///   bootstrap_server_session` compares this against the desktop client's
+///   own `CARGO_PKG_VERSION` byte-for-byte to catch a stale server image
+///   before it manifests as a confusing 404 on some newer endpoint. A
+///   released client binary already has that exact comparison baked in, so
+///   this field can't be repointed at anything that isn't
+///   `CARGO_PKG_VERSION` without breaking every client already out there
+///   (this happened once already -- see git history).
+/// - `build` is the deployed git commit (or `CARGO_PKG_VERSION` again as a
+///   fallback for a local dev build with no `GIT_SHA` baked in -- see
+///   `apps/game-mgr/backend/Dockerfile`), shown in the Settings tab so a
+///   deploy can be confirmed by eye instead of guessed at. Purely
+///   informational: nothing compares against it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PingResponse {
     pub status: String,
     pub version: String,
+    pub build: String,
 }
 
 // ---------------------------------------------------------------------------

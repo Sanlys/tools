@@ -124,13 +124,14 @@ async fn readyz(State(state): State<AppState>) -> Result<&'static str, ApiError>
 }
 
 async fn ping() -> Json<game_mgr_api_types::PingResponse> {
-    // version lets clients spot a stale server image (PLAN.md §15): the
-    // deployed git commit when built via the Dockerfile's `GIT_SHA` build
-    // arg, or the crate version for a local `cargo build`/`cargo run`
-    // that never set it.
+    // `version` lets clients spot a stale server image (PLAN.md §15) --
+    // MUST stay CARGO_PKG_VERSION, not the git sha: see PingResponse's doc
+    // comment for why. `build` is the deployed git commit for the
+    // Settings-tab display, separate from that compatibility check.
     Json(game_mgr_api_types::PingResponse {
         status: "ok".to_string(),
-        version: option_env!("GIT_SHA")
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        build: option_env!("GIT_SHA")
             .unwrap_or(env!("CARGO_PKG_VERSION"))
             .to_string(),
     })
