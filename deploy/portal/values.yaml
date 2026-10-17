@@ -91,14 +91,12 @@ serviceAccount:
 dashboardGrant:
   enabled: false
 ingress:
+  enabled: false
+httpRoute:
   enabled: true
-  className: internal
-  host: portal.k8s.lysakermoen.com
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-internal
-  tls:
-    enabled: true
-    secretName: portal-internal-tls
+  gatewayName: traefik-gateway
+  gatewayNamespace: traefik
+  hostname: portal.k8s.lysakermoen.com
 bucket:
   enabled: false
 postgres:

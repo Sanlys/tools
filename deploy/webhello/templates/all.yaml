@@ -4,6 +4,8 @@
 ---
 {{ include "tool-library.ingress" . }}
 ---
+{{ include "tool-library.httproute" . }}
+---
 {{ include "tool-library.servicemonitor" . }}
 ---
 {{ include "tool-library.prometheusrule" . }}

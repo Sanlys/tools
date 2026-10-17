@@ -59,14 +59,12 @@ dashboardGrant:
   subjectName: tools-portal
   subjectNamespace: tools-portal
 ingress:
+  enabled: false
+httpRoute:
   enabled: true
-  className: internal
-  host: webhello.k8s.lysakermoen.com
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-internal
-  tls:
-    enabled: true
-    secretName: webhello-internal-tls
+  gatewayName: traefik-gateway
+  gatewayNamespace: traefik
+  hostname: webhello.k8s.lysakermoen.com
 # Not provisioning its own bucket/Postgres -- see the top comment.
 bucket:
   enabled: false

@@ -40,14 +40,12 @@ dashboardGrant:
   subjectName: tools-portal
   subjectNamespace: tools-portal
 ingress:
+  enabled: false
+httpRoute:
   enabled: true
-  className: internal
-  host: hello.k8s.lysakermoen.com
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-internal
-  tls:
-    enabled: true
-    secretName: hello-internal-tls
+  gatewayName: traefik-gateway
+  gatewayNamespace: traefik
+  hostname: hello.k8s.lysakermoen.com
 bucket:
   enabled: true
   bucketName: tools-hello

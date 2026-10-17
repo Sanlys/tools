@@ -55,14 +55,12 @@ dashboardGrant:
 # the same way game-mgr's own original (pre-port) design already required --
 # independent of the frontend swap from React to an egui panel.
 ingress:
+  enabled: false
+httpRoute:
   enabled: true
-  className: public
-  host: games.lysakermoen.com
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-public
-  tls:
-    enabled: true
-    secretName: games-lysakermoen-com-tls
+  gatewayName: traefik-public-gateway
+  gatewayNamespace: traefik-public
+  hostname: games.lysakermoen.com
 bucket:
   enabled: true
   bucketName: tools-game-mgr

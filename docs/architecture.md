@@ -139,11 +139,14 @@ or a websocket (`apps/hello/backend`'s `/ws` demonstrates the pattern;
 This now targets the real homelab cluster (Talos + Argo CD, see the
 `kubernetes` repo's `CLAUDE.md`) rather than generic placeholders:
 
-- Ingress: `ingressClassName: internal` (nginx-ingress,
-  `*.k8s.lysakermoen.com`) or `public` (`*.lysakermoen.com`), with the
-  matching `cert-manager.io/cluster-issuer` annotation
-  (`letsencrypt-internal`/`-public`) -- set per tool in its own
-  `values.yaml`, see `deploy/hello/values.yaml`.
+- Routing: the cluster moved from nginx-ingress to Traefik (Gateway API),
+  running as two separate instances - `traefik-gateway`/ns `traefik` for
+  `*.k8s.lysakermoen.com`, `traefik-public-gateway`/ns `traefik-public` for
+  `*.lysakermoen.com`. Set `httpRoute.enabled: true` with the matching
+  `gatewayName`/`gatewayNamespace`/`hostname` per tool in its own
+  `values.yaml` (leave `ingress.enabled: false`) - see
+  `deploy/hello/values.yaml`. `tool-library.ingress` still exists for a
+  classic-Ingress cluster, but nothing here uses it anymore.
 - Monitoring: this cluster's Prometheus Operator (kube-prometheus-stack)
   watches `ServiceMonitor`/`PrometheusRule` cluster-wide with an empty
   selector, so `monitoring.serviceMonitorLabels`/`prometheusRuleLabels` can
