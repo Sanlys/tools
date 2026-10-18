@@ -75,6 +75,13 @@ postgres:
   database: ""
   resources: {}
 
+# Locks the tool's pod down to ingress only from whichever Gateway
+# namespace fronts it (httpRoute.gatewayNamespace) - opt-in, since this
+# changes pod-to-pod reachability and needs a CNI that enforces
+# CiliumNetworkPolicy. See _networkpolicy.tpl.
+networkPolicy:
+  enabled: false
+
 monitoring:
   enabled: false
   interval: 30s

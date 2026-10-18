@@ -61,6 +61,14 @@ httpRoute:
   gatewayName: traefik-public-gateway
   gatewayNamespace: traefik-public
   hostname: games.lysakermoen.com
+# This is the one tool on the platform that's actually public (see the
+# ingress comment above) - locking its ingress down to only
+# traefik-public matches the same scoped-down default-deny pass done for
+# every other genuinely-internet-facing app elsewhere in the cluster.
+# idp/portal/hello/webhello stay on internal-only routes and are left
+# alone.
+networkPolicy:
+  enabled: true
 bucket:
   enabled: true
   bucketName: tools-game-mgr

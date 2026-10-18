@@ -6,6 +6,8 @@
 ---
 {{ include "tool-library.httproute" . }}
 ---
+{{ include "tool-library.networkpolicy" . }}
+---
 {{ include "tool-library.objectbucketclaim" . }}
 ---
 {{ include "tool-library.postgres" . }}
