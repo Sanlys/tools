@@ -57,16 +57,19 @@ jobs:
       - name: install native build deps (libdbus, for keyring)
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
 
-      # MinIO from its first-party registry (S3 stand-in for
+      # MinIO (S3 stand-in for
       # game-mgr-backend's tests/api_e2e.rs artifact tests; each test
       # creates its own throwaway bucket, see tests/common/mod.rs's
-      # TestBucket). Plain `docker run`, not a GitHub service container:
+      # TestBucket). MinIO stopped publishing public images (quay.io/minio/minio
+      # answers 401, Docker Hub minio/minio is gone), so this uses pgsty/minio,
+      # a community-maintained drop-in build of the same server.
+      # Plain `docker run`, not a GitHub service container:
       # those can't pass a command, and MinIO needs `server /data`.
       - name: start MinIO (S3 stand-in for game-mgr-backend's artifact tests)
         run: |
           docker run -d --name minio -p 9000:9000 \
             -e MINIO_ROOT_USER=gamemgr -e MINIO_ROOT_PASSWORD=gamemgr-secret \
-            quay.io/minio/minio server /data
+            pgsty/minio:RELEASE.2026-08-04T00-00-00Z server /data
           timeout 60 sh -c 'until curl -fsS http://localhost:9000/minio/health/live; do sleep 1; done'
 
       - name: fmt
