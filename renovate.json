@@ -1,0 +1,53 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Only keeps the tools' shared Postgres image current (patch, minor and digest within 16.x). Every other dependency in this repo is left alone on purpose; widen enabledManagers to onboard more.",
+  "extends": [
+    "config:recommended"
+  ],
+  "enabledManagers": [
+    "custom.regex"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "postgres image in Helm values, the tool-library default and docs (image: postgres:<tag>@sha256:<digest>)",
+      "managerFilePatterns": [
+        "/(^|/)values\\.ya?ml$/",
+        "/(^|/)_postgres\\.tpl$/",
+        "/^docs/postgres\\.md$/"
+      ],
+      "matchStrings": [
+        "\"?(?<depName>postgres):(?<currentValue>[0-9][^@\"\\s]*)@(?<currentDigest>sha256:[a-f0-9]{64})"
+      ],
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "docker"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Postgres majors need a dump/restore or pg_upgrade; an in-place tag bump breaks the data directory.",
+      "matchPackageNames": [
+        "postgres"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "All postgres image bumps (patch, minor, digest) in one PR, automerged after 2 days during the day once CI passes.",
+      "matchPackageNames": [
+        "postgres"
+      ],
+      "groupName": "postgres image",
+      "automerge": true,
+      "automergeType": "pr",
+      "minimumReleaseAge": "2 days",
+      "automergeSchedule": [
+        "* 9-19 * * *"
+      ]
+    }
+  ],
+  "timezone": "Europe/Oslo",
+  "rebaseWhen": "conflicted"
+}

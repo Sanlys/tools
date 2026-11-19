@@ -15,7 +15,7 @@ Postgres, that's a case for a real Postgres operator, not this chart.
 ```yaml
 postgres:
   enabled: true
-  image: postgres:16-alpine
+  image: postgres:16.16-alpine@sha256:1d5b02d3a9941fbd52437db4107f8c52d6297dac553ca1e5c299ebb3756b4857
   storage: 1Gi
   storageClassName: rook-ceph-block-ssd   # no cluster-default SC exists; must be set explicitly
   database: my_tool
